@@ -5,7 +5,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import get_settings
-from app.routers import health_router, companies_router, assessments_router, scores_router
+from app.routers import (
+    # CS1
+    health_router, 
+    companies_router, 
+    assessments_router, 
+    scores_router,
+    # CS2
+    documents_router,
+    signals_router,
+    evidence_router,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -43,12 +53,19 @@ def create_app() -> FastAPI:
         - Assessment lifecycle management
         - Seven-dimension AI-readiness scoring
         - Caching for optimized performance
+        - **[CS2] SEC document collection and parsing**
+        - **[CS2] External signal collection (jobs, patents, tech stack)**
+        - **[CS2] Evidence aggregation and statistics**
         
         ### Assessment Types:
         - **Screening**: Quick external assessment
         - **Due Diligence**: Deep dive with internal access
         - **Quarterly**: Regular portfolio monitoring
         - **Exit Prep**: Pre-exit assessment
+        
+        ### Evidence Collection (CS2):
+        - **Documents**: SEC 10-K, 10-Q, 8-K filings
+        - **Signals**: Job postings, technology stack, patents
         """,
         version=settings.app_version,
         lifespan=lifespan,
@@ -66,11 +83,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Include routers
+    # --- CS1 Routers ---
     app.include_router(health_router)
     app.include_router(companies_router)
     app.include_router(assessments_router)
     app.include_router(scores_router)
+    
+    # --- CS2 Routers ---
+    app.include_router(documents_router)
+    app.include_router(signals_router)
+    app.include_router(evidence_router)
     
     # Global exception handler
     @app.exception_handler(Exception)

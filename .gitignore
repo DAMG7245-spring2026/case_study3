@@ -127,5 +127,6 @@ snowflake_credentials.json
 # ==============================================
 tmp/
 temp/
+data/
 *.tmp
 *.temp

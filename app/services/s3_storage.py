@@ -1,8 +1,12 @@
 """AWS S3 storage service."""
 import logging
+import mimetypes
+from pathlib import Path
 from typing import Optional
+
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
+
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -58,7 +62,7 @@ class S3Storage:
         try:
             extra_args = {"ContentType": content_type}
             if metadata:
-                extra_args["Metadata"] = metadata
+                extra_args["Metadata"] = {k: str(v) for k, v in metadata.items()}
             
             self.client.put_object(
                 Bucket=self.bucket,
@@ -122,6 +126,159 @@ class S3Storage:
         except Exception as e:
             logger.error(f"Failed to generate presigned URL for {key}: {e}")
             return None
+
+    # ================================================================
+    # CS2: SEC Filing Storage Methods
+    # ================================================================
+
+    def upload_sec_filing(
+        self,
+        ticker: str,
+        filing_type: str,
+        filing_date: str,
+        local_path: Path,
+        content_hash: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Upload a SEC filing to S3.
+        
+        Args:
+            ticker: Company ticker symbol
+            filing_type: Filing type (10-K, 10-Q, 8-K)
+            filing_date: Filing date (YYYY-MM-DD)
+            local_path: Path to local file
+            content_hash: Optional content hash for deduplication
+            
+        Returns:
+            S3 key if successful, None otherwise
+        """
+        # Generate S3 key
+        # Format: sec-filings/{ticker}/{filing_type}/{date}_{filename}
+        filename = local_path.name
+        s3_key = f"sec-filings/{ticker.upper()}/{filing_type}/{filing_date}_{filename}"
+        
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(str(local_path))
+        if content_type is None:
+            if local_path.suffix.lower() in ['.htm', '.html']:
+                content_type = 'text/html'
+            elif local_path.suffix.lower() == '.pdf':
+                content_type = 'application/pdf'
+            else:
+                content_type = 'text/plain'
+        
+        # Read file content
+        try:
+            with open(local_path, 'rb') as f:
+                content = f.read()
+        except Exception as e:
+            logger.error(f"Failed to read local file {local_path}: {e}")
+            return None
+        
+        # Prepare metadata
+        metadata = {
+            "ticker": ticker.upper(),
+            "filing_type": filing_type,
+            "filing_date": filing_date,
+            "original_filename": filename,
+        }
+        if content_hash:
+            metadata["content_hash"] = content_hash
+        
+        # Upload to S3
+        success = self.upload_document(
+            key=s3_key,
+            content=content,
+            content_type=content_type,
+            metadata=metadata
+        )
+        
+        if success:
+            logger.info(f"Uploaded SEC filing to S3: {s3_key}")
+            return s3_key
+        
+        return None
+
+    def upload_sec_filing_bytes(
+        self,
+        ticker: str,
+        filing_type: str,
+        filing_date: str,
+        filename: str,
+        content: bytes,
+        content_type: str = "text/html",
+        content_hash: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Upload SEC filing content directly from bytes.
+        
+        Args:
+            ticker: Company ticker symbol
+            filing_type: Filing type (10-K, 10-Q, 8-K)
+            filing_date: Filing date (YYYY-MM-DD)
+            filename: Original filename
+            content: File content as bytes
+            content_type: MIME type
+            content_hash: Optional content hash
+            
+        Returns:
+            S3 key if successful, None otherwise
+        """
+        s3_key = f"sec-filings/{ticker.upper()}/{filing_type}/{filing_date}_{filename}"
+        
+        metadata = {
+            "ticker": ticker.upper(),
+            "filing_type": filing_type,
+            "filing_date": filing_date,
+            "original_filename": filename,
+        }
+        if content_hash:
+            metadata["content_hash"] = content_hash
+        
+        success = self.upload_document(
+            key=s3_key,
+            content=content,
+            content_type=content_type,
+            metadata=metadata
+        )
+        
+        return s3_key if success else None
+
+    def get_sec_filing(self, s3_key: str) -> Optional[bytes]:
+        """Download a SEC filing from S3."""
+        return self.download_document(s3_key)
+
+    def list_sec_filings(
+        self,
+        ticker: Optional[str] = None,
+        filing_type: Optional[str] = None
+    ) -> list[str]:
+        """
+        List SEC filings in S3.
+        
+        Args:
+            ticker: Filter by ticker (optional)
+            filing_type: Filter by filing type (optional)
+            
+        Returns:
+            List of S3 keys
+        """
+        if ticker and filing_type:
+            prefix = f"sec-filings/{ticker.upper()}/{filing_type}/"
+        elif ticker:
+            prefix = f"sec-filings/{ticker.upper()}/"
+        else:
+            prefix = "sec-filings/"
+        
+        return self.list_documents(prefix=prefix)
+
+    def delete_sec_filing(self, s3_key: str) -> bool:
+        """Delete a SEC filing from S3."""
+        return self.delete_document(s3_key)
+
+    def get_sec_filing_url(self, s3_key: str, expiration: int = 3600) -> Optional[str]:
+        """Generate a presigned URL for a SEC filing."""
+        return self.generate_presigned_url(s3_key, expiration)
 
 
 # Singleton instance

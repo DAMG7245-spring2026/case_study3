@@ -1,13 +1,24 @@
+"""Pydantic models for PE Org-AI-R Platform."""
 
-"""Models package - exports all Pydantic models."""
-from .enums import (
+# Common Models
+from app.models.common import (
+    HealthResponse,
+    PaginatedResponse,
+    ErrorResponse,
+    MessageResponse,
+)
+
+# Enums
+from app.models.enums import (
     AssessmentType,
     AssessmentStatus,
     Dimension,
     DIMENSION_WEIGHTS,
     VALID_STATUS_TRANSITIONS,
 )
-from .company import (
+
+# CS1 Models - Company
+from app.models.company import (
     IndustryBase,
     IndustryCreate,
     IndustryResponse,
@@ -17,7 +28,9 @@ from .company import (
     CompanyResponse,
     CompanyWithIndustry,
 )
-from .assessment import (
+
+# CS1 Models - Assessment
+from app.models.assessment import (
     AssessmentBase,
     AssessmentCreate,
     AssessmentUpdate,
@@ -25,7 +38,9 @@ from .assessment import (
     AssessmentResponse,
     AssessmentWithScores,
 )
-from .dimension import (
+
+# CS1 Models - Dimension
+from app.models.dimension import (
     DimensionScoreBase,
     DimensionScoreCreate,
     DimensionScoreBulkCreate,
@@ -33,21 +48,62 @@ from .dimension import (
     DimensionScoreResponse,
     DimensionScoreSummary,
 )
-from .common import (
-    PaginatedResponse,
-    HealthResponse,
-    ErrorResponse,
-    MessageResponse,
+
+# CS2 Models - Document
+from app.models.document import (
+    DocumentStatus,
+    FilingType,
+    DocumentBase,
+    DocumentCreate,
+    DocumentResponse,
+    DocumentChunkBase,
+    DocumentChunkCreate,
+    DocumentChunkResponse,
+    ParsedDocument,
+    DocumentChunk,
+    DocumentCollectionRequest,
+    DocumentCollectionResponse,
+)
+
+# CS2 Models - Signal
+from app.models.signal import (
+    SignalCategory,
+    SignalSource,
+    ExternalSignalBase,
+    ExternalSignalCreate,
+    ExternalSignalResponse,
+    CompanySignalSummaryBase,
+    CompanySignalSummaryCreate,
+    CompanySignalSummaryResponse,
+    SignalCollectionRequest,
+    SignalCollectionResponse,
+    JobPosting,
+    TechnologyDetection,
+    Patent,
+)
+
+# CS2 Models - Evidence
+from app.models.evidence import (
+    CompanyEvidence,
+    EvidenceStats,
+    BackfillRequest,
+    BackfillResponse,
+    TARGET_COMPANIES,
 )
 
 __all__ = [
+    # Common
+    "HealthResponse",
+    "PaginatedResponse",
+    "ErrorResponse",
+    "MessageResponse",
     # Enums
     "AssessmentType",
-    "AssessmentStatus", 
+    "AssessmentStatus",
     "Dimension",
     "DIMENSION_WEIGHTS",
     "VALID_STATUS_TRANSITIONS",
-    # Company
+    # CS1 - Company
     "IndustryBase",
     "IndustryCreate",
     "IndustryResponse",
@@ -56,23 +112,51 @@ __all__ = [
     "CompanyUpdate",
     "CompanyResponse",
     "CompanyWithIndustry",
-    # Assessment
+    # CS1 - Assessment
     "AssessmentBase",
     "AssessmentCreate",
     "AssessmentUpdate",
     "AssessmentStatusUpdate",
     "AssessmentResponse",
     "AssessmentWithScores",
-    # Dimension
+    # CS1 - Dimension
     "DimensionScoreBase",
     "DimensionScoreCreate",
     "DimensionScoreBulkCreate",
     "DimensionScoreUpdate",
     "DimensionScoreResponse",
     "DimensionScoreSummary",
-    # Common
-    "PaginatedResponse",
-    "HealthResponse",
-    "ErrorResponse",
-    "MessageResponse",
+    # CS2 - Documents
+    "DocumentStatus",
+    "FilingType",
+    "DocumentBase",
+    "DocumentCreate",
+    "DocumentResponse",
+    "DocumentChunkBase",
+    "DocumentChunkCreate",
+    "DocumentChunkResponse",
+    "ParsedDocument",
+    "DocumentChunk",
+    "DocumentCollectionRequest",
+    "DocumentCollectionResponse",
+    # CS2 - Signals
+    "SignalCategory",
+    "SignalSource",
+    "ExternalSignalBase",
+    "ExternalSignalCreate",
+    "ExternalSignalResponse",
+    "CompanySignalSummaryBase",
+    "CompanySignalSummaryCreate",
+    "CompanySignalSummaryResponse",
+    "SignalCollectionRequest",
+    "SignalCollectionResponse",
+    "JobPosting",
+    "TechnologyDetection",
+    "Patent",
+    # CS2 - Evidence
+    "CompanyEvidence",
+    "EvidenceStats",
+    "BackfillRequest",
+    "BackfillResponse",
+    "TARGET_COMPANIES",
 ]
