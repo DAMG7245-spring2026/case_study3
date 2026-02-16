@@ -74,13 +74,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['assessment_id'], ['assessments.id']),
     )
 
-    # ===== INDEXES =====
-    op.create_index('idx_companies_industry', 'companies', ['industry_id'])
-    op.create_index('idx_companies_deleted', 'companies', ['is_deleted'])
-    op.create_index('idx_assessments_company', 'assessments', ['company_id'])
-    op.create_index('idx_assessments_status', 'assessments', ['status'])
-    op.create_index('idx_assessments_type', 'assessments', ['assessment_type'])
-    op.create_index('idx_dimension_scores_assessment', 'dimension_scores', ['assessment_id'])
+    # NOTE: Snowflake standard tables do not support secondary indexes.
+    # Snowflake optimizes queries via micro-partitions and clustering keys.
 
 
 def downgrade() -> None:

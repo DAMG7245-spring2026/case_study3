@@ -72,12 +72,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['company_id'], ['companies.id']),
     )
 
-    # ===== INDEXES =====
-    op.create_index('idx_documents_company', 'documents', ['company_id'])
-    op.create_index('idx_documents_status', 'documents', ['status'])
-    op.create_index('idx_chunks_document', 'document_chunks', ['document_id'])
-    op.create_index('idx_signals_company', 'external_signals', ['company_id'])
-    op.create_index('idx_signals_category', 'external_signals', ['category'])
+    # NOTE: Snowflake standard tables do not support secondary indexes.
 
 
 def downgrade() -> None:

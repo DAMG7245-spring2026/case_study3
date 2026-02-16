@@ -8,6 +8,12 @@ import os
 # Import snowflake-sqlalchemy to register the dialect
 import snowflake.sqlalchemy
 
+# Register Snowflake dialect with Alembic's DDL system
+from alembic.ddl.impl import DefaultImpl
+
+class SnowflakeImpl(DefaultImpl):
+    __dialect__ = "snowflake"
+
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

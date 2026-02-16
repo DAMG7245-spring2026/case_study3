@@ -34,26 +34,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['company_id'], ['companies.id']),
     )
 
-    # ===== ADD MISSING INDEXES =====
-    # Index for documents ticker (from schema_cs2.sql)
-    op.create_index('idx_documents_ticker', 'documents', ['ticker'])
-
-    # ===== ADD MISSING CONSTRAINTS =====
-    # Unique constraint for document_chunks (document_id, chunk_index)
-    op.create_unique_constraint(
-        'uq_document_chunks_document_index',
-        'document_chunks',
-        ['document_id', 'chunk_index']
-    )
+    # NOTE: Snowflake standard tables do not support secondary indexes or
+    # unique constraints (except on hybrid tables).
 
 
 def downgrade() -> None:
     """Drop company_signal_summaries table and remove constraints/indexes."""
-    # Drop unique constraint
-    op.drop_constraint('uq_document_chunks_document_index', 'document_chunks')
-
-    # Drop index
-    op.drop_index('idx_documents_ticker', 'documents')
-
-    # Drop table
     op.drop_table('company_signal_summaries')

@@ -116,13 +116,14 @@ class SECEdgarPipeline:
                 try:
                     logger.info(f"Downloading {filing_type} for {ticker} (attempt {attempt}/{self.max_retries})")
                     
-                    # Download filings
+                    # Download filings (download_details=True to get PDF/HTML primary documents)
                     self.dl.get(
                         filing_type,
                         ticker,
                         limit=limit,
                         after=after,
-                        before=before
+                        before=before,
+                        download_details=True
                     )
                     
                     success = True

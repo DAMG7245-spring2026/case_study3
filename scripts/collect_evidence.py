@@ -150,10 +150,24 @@ class EvidenceCollector:
                         local_path=filing_path,
                         content_hash=parsed.content_hash
                     )
-                    
+
                     if s3_key:
                         self.stats["s3_uploads"] += 1
                         logger.info(f"   ☁️  Uploaded to S3: {s3_key}")
+
+                    # Convert and upload sibling primary documents as PDF to S3
+                    accession_dir = filing_path.parent
+                    for sibling in accession_dir.glob("primary-document.*"):
+                        pd_s3_key = self.s3.upload_sec_filing_as_pdf(
+                            ticker=ticker,
+                            filing_type=parsed.filing_type,
+                            filing_date=filing_date_str,
+                            local_path=sibling,
+                            content_hash=parsed.content_hash
+                        )
+                        if pd_s3_key:
+                            self.stats["s3_uploads"] += 1
+                            logger.info(f"   ☁️  Uploaded PDF to S3: {pd_s3_key}")
                     
                     # Insert document record
                     doc_id = self.db.insert_document(
@@ -169,6 +183,7 @@ class EvidenceCollector:
                     )
                     
                     # Chunk document
+                    parsed.document_id = doc_id
                     chunks = self.chunker.chunk_document(parsed)
                     chunk_dicts = [
                         {
