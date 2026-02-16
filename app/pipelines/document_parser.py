@@ -17,13 +17,26 @@ logger = logging.getLogger(__name__)
 class DocumentParser:
     """Parse SEC filings from various formats (PDF, HTML, TXT)."""
 
-    # Regex patterns for extracting key sections from 10-K filings
-    SECTION_PATTERNS = {
-        "item_1": r"(?:ITEM\s*1[.\s]*BUSINESS)",
-        "item_1a": r"(?:ITEM\s*1A[.\s]*RISK\s*FACTORS)",
-        "item_7": r"(?:ITEM\s*7[.\s]*MANAGEMENT)",
-        "item_7a": r"(?:ITEM\s*7A[.\s]*QUANTITATIVE)",
-    }
+    # Ordered section headers for 10-K filings.
+    # Order matters — each section ends where the next one begins.
+    SECTION_HEADERS = [
+        ("item_1", r"ITEM\s+1\.?\s+BUSINESS"),
+        ("item_1a", r"ITEM\s+1A\.?\s+RISK\s+FACTORS"),
+        ("item_1b", r"ITEM\s+1B\.?\s+UNRESOLVED"),
+        ("item_1c", r"ITEM\s+1C\.?\s+CYBERSECURITY"),
+        ("item_2", r"ITEM\s+2\.?\s+PROPERTIES"),
+        ("item_3", r"ITEM\s+3\.?\s+LEGAL"),
+        ("item_4", r"ITEM\s+4\.?\s+MINE"),
+        ("item_5", r"ITEM\s+5\.?\s+MARKET"),
+        ("item_6", r"ITEM\s+6\.?\s+(?:RESERVED|\[RESERVED\])"),
+        ("item_7", r"ITEM\s+7\.?\s+MANAGEMENT"),
+        ("item_7a", r"ITEM\s+7A\.?\s+QUANTITATIVE"),
+        ("item_8", r"ITEM\s+8\.?\s+FINANCIAL\s+STATEMENTS"),
+        ("item_9", r"ITEM\s+9\.?\s+CHANGES"),
+    ]
+
+    # Sections relevant for AI readiness scoring
+    TARGET_SECTIONS = {"item_1", "item_1a", "item_7", "item_7a"}
 
     def parse_filing(self, file_path: Path, ticker: str) -> ParsedDocument:
         """
@@ -114,19 +127,42 @@ class DocumentParser:
             raise
 
     def _extract_sections(self, content: str) -> dict[str, str]:
-        """Extract key sections from 10-K content."""
-        sections = {}
+        """
+        Extract key sections from 10-K content.
+
+        Strategy: find the LAST occurrence of each section header to skip
+        Table of Contents references, then use the next section header as
+        the end boundary.
+        """
         content_upper = content.upper()
 
-        for section_name, pattern in self.SECTION_PATTERNS.items():
-            match = re.search(pattern, content_upper)
-            if match:
-                start = match.start()
-                # Find end (next ITEM or end of document)
-                next_item = re.search(r"ITEM\s*\d", content_upper[start + 100 :])
-                end = start + 100 + next_item.start() if next_item else len(content)
-                # Limit section size to 50000 chars
-                sections[section_name] = content[start:end][:50000]
+        # Find the last (i.e. actual body) occurrence of each section header
+        header_positions = []  # list of (position, section_name)
+        for section_name, pattern in self.SECTION_HEADERS:
+            # Find all matches — take the last one to skip ToC references
+            matches = list(re.finditer(pattern, content_upper))
+            if matches:
+                last_match = matches[-1]
+                header_positions.append((last_match.start(), section_name))
+
+        # Sort by position in the document
+        header_positions.sort(key=lambda x: x[0])
+
+        # Extract sections: each section runs from its header to the next header
+        sections = {}
+        for i, (start, section_name) in enumerate(header_positions):
+            if section_name not in self.TARGET_SECTIONS:
+                continue
+
+            # End at the next section header, or end of document
+            if i + 1 < len(header_positions):
+                end = header_positions[i + 1][0]
+            else:
+                end = len(content)
+
+            section_text = content[start:end].strip()
+            if section_text:
+                sections[section_name] = section_text
 
         return sections
 
@@ -173,7 +209,7 @@ class DocumentParser:
 
             # Skip non-main documents (exhibits, graphics, etc.)
             if any(
-                skip in doc_type for skip in ["EX-", "GRAPHIC", "XML", "ZIP", "EXCEL"]
+                skip in doc_type for skip in ["EX-", "GRAPHIC", "XML", "ZIP", "EXCEL", "JSON"]
             ):
                 continue
 
@@ -183,6 +219,17 @@ class DocumentParser:
                 continue
 
             text_content = text_match.group(1)
+
+            # Skip binary/encoded content (uuencoded PDFs, base64, etc.)
+            # These appear as duplicate filing entries embedded as PDF
+            stripped = text_content.lstrip()
+            if (
+                stripped.startswith("<PDF>")       # SEC PDF wrapper tag
+                or stripped.startswith("begin 6")  # uuencode header (begin 644 ...)
+                or stripped.startswith("%PDF")      # raw PDF content
+            ):
+                logger.debug(f"Skipping binary/encoded document: {doc_type}")
+                continue
 
             # Parse HTML within the TEXT section
             soup = BeautifulSoup(text_content, "html.parser")

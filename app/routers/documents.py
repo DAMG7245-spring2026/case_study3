@@ -274,9 +274,20 @@ def _run_document_collection(
                     local_path=filing_path,
                     content_hash=parsed.content_hash
                 )
-                
+
                 if not s3_key:
                     logger.warning(f"Task {task_id}: Failed to upload to S3, continuing without S3 key")
+
+                # Convert and upload sibling primary documents as PDF to S3
+                accession_dir = filing_path.parent
+                for sibling in accession_dir.glob("primary-document.*"):
+                    s3.upload_sec_filing_as_pdf(
+                        ticker=ticker,
+                        filing_type=parsed.filing_type,
+                        filing_date=filing_date_str,
+                        local_path=sibling,
+                        content_hash=parsed.content_hash
+                    )
                 
                 # Insert document record
                 doc_id = db.insert_document(
@@ -292,6 +303,7 @@ def _run_document_collection(
                 )
                 
                 # Chunk document
+                parsed.document_id = doc_id
                 chunks = chunker.chunk_document(parsed)
                 chunk_dicts = [
                     {

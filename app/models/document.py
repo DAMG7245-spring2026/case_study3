@@ -96,6 +96,7 @@ class DocumentChunkResponse(DocumentChunkBase):
 
 class ParsedDocument(BaseModel):
     """Represents a fully parsed SEC document."""
+    document_id: Optional[str] = None  # UUID from documents table, set after DB insert
     company_ticker: str
     filing_type: str
     filing_date: datetime

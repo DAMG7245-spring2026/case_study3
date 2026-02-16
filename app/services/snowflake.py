@@ -586,10 +586,10 @@ class SnowflakeService:
         now = datetime.now(timezone.utc)
         
         query = """
-            INSERT INTO companies (id, name, ticker, industry_id, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO companies (id, name, ticker, industry_id, position_factor, is_deleted, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        self.execute_write(query, (company_id, name, ticker.upper(), str(industry_id), now, now))
+        self.execute_write(query, (company_id, name, ticker.upper(), str(industry_id), 0.0, False, now, now))
         
         logger.info(f"Created company {ticker}: {name}")
         

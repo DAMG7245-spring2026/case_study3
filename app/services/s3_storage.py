@@ -219,7 +219,64 @@ class S3Storage:
         if success:
             logger.info(f"Uploaded SEC filing to S3: {s3_key}")
             return s3_key
-        
+
+        return None
+
+    def upload_sec_filing_as_pdf(
+        self,
+        ticker: str,
+        filing_type: str,
+        filing_date: str,
+        local_path: Path,
+        content_hash: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Convert an HTML SEC filing to PDF and upload to S3.
+
+        Args:
+            ticker: Company ticker symbol
+            filing_type: Filing type (10-K, 10-Q, 8-K)
+            filing_date: Filing date (YYYY-MM-DD)
+            local_path: Path to local HTML file
+            content_hash: Optional content hash for deduplication
+
+        Returns:
+            S3 key if successful, None otherwise
+        """
+        try:
+            from weasyprint import HTML
+
+            # Convert HTML to PDF bytes
+            pdf_bytes = HTML(filename=str(local_path)).write_pdf()
+
+            # Generate S3 key with .pdf extension
+            stem = local_path.stem  # e.g. "primary-document"
+            s3_key = f"sec-filings/{ticker.upper()}/{filing_type}/{filing_date}_{stem}.pdf"
+
+            metadata = {
+                "ticker": ticker.upper(),
+                "filing_type": filing_type,
+                "filing_date": filing_date,
+                "original_filename": local_path.name,
+                "converted_from": local_path.suffix,
+            }
+            if content_hash:
+                metadata["content_hash"] = content_hash
+
+            success = self.upload_document(
+                key=s3_key,
+                content=pdf_bytes,
+                content_type="application/pdf",
+                metadata=metadata
+            )
+
+            if success:
+                logger.info(f"Uploaded SEC filing as PDF to S3: {s3_key}")
+                return s3_key
+
+        except Exception as e:
+            logger.error(f"Failed to convert/upload {local_path} as PDF: {e}")
+
         return None
 
     def upload_sec_filing_bytes(

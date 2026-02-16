@@ -208,11 +208,18 @@ def _run_backfill(
                     
                     logger.info(f"Task {task_id}: Downloaded {len(filings)} filings for {ticker}")
                     
+                    # Process only full-submission.txt files for parsing/chunking
+                    # and upload sibling primary documents (PDF/HTML) to S3
                     for filing_path in filings:
                         try:
                             filing_path = Path(filing_path)
+
+                            # Only parse full-submission.txt for chunking
+                            if filing_path.name != "full-submission.txt":
+                                continue
+
                             parsed = parser.parse_filing(filing_path, ticker)
-                            
+
                             # Check duplicate
                             existing = db.execute_one(
                                 "SELECT id FROM documents WHERE content_hash = %s",
@@ -221,8 +228,8 @@ def _run_backfill(
                             if existing:
                                 logger.info(f"Task {task_id}: Skipping duplicate {parsed.filing_type}")
                                 continue
-                            
-                            # Upload to S3
+
+                            # Upload full-submission.txt to S3
                             filing_date_str = parsed.filing_date.strftime("%Y-%m-%d")
                             s3_key = s3.upload_sec_filing(
                                 ticker=ticker,
@@ -231,11 +238,25 @@ def _run_backfill(
                                 local_path=filing_path,
                                 content_hash=parsed.content_hash
                             )
-                            
+
                             if s3_key:
                                 stats["s3_uploads"] += 1
-                            
-                            # Insert document
+
+                            # Convert and upload sibling primary documents as PDF to S3
+                            accession_dir = filing_path.parent
+                            for sibling in accession_dir.glob("primary-document.*"):
+                                pd_s3_key = s3.upload_sec_filing_as_pdf(
+                                    ticker=ticker,
+                                    filing_type=parsed.filing_type,
+                                    filing_date=filing_date_str,
+                                    local_path=sibling,
+                                    content_hash=parsed.content_hash
+                                )
+                                if pd_s3_key:
+                                    stats["s3_uploads"] += 1
+                                    logger.info(f"Task {task_id}: Uploaded PDF to S3: {pd_s3_key}")
+
+                            # Insert document record
                             doc_id = db.insert_document(
                                 company_id=company_id,
                                 ticker=ticker,
@@ -247,8 +268,9 @@ def _run_backfill(
                                 s3_key=s3_key,
                                 status="parsed"
                             )
-                            
+
                             # Chunk and insert
+                            parsed.document_id = doc_id
                             chunks = chunker.chunk_document(parsed)
                             chunk_dicts = [
                                 {
@@ -261,14 +283,14 @@ def _run_backfill(
                                 }
                                 for c in chunks
                             ]
-                            
+
                             db.insert_chunks(doc_id, chunk_dicts)
                             db.update_document_status(doc_id, "chunked", chunk_count=len(chunks))
-                            
+
                             stats["documents"] += 1
                             stats["chunks"] += len(chunks)
                             logger.info(f"Task {task_id}: Processed {parsed.filing_type}: {len(chunks)} chunks")
-                            
+
                         except Exception as e:
                             logger.error(f"Task {task_id}: Error processing {filing_path}: {e}")
                             stats["errors"] += 1
