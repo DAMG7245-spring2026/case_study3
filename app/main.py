@@ -11,11 +11,13 @@ from app.routers import (
     companies_router,
     assessments_router,
     scores_router,
+    industries_router,
     # CS2
     documents_router,
     signals_router,
     evidence_router,
     report_router,
+    logs_router,
 )
 
 # Configure logging
@@ -23,6 +25,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+from app.log_buffer import install_log_buffer_handler
+install_log_buffer_handler()
 logger = logging.getLogger(__name__)
 
 
@@ -89,11 +93,13 @@ def create_app() -> FastAPI:
     app.include_router(companies_router)
     app.include_router(assessments_router)
     app.include_router(scores_router)
+    app.include_router(industries_router)
     # --- CS2 Routers ---
     app.include_router(documents_router)
     app.include_router(signals_router)
     app.include_router(evidence_router)
     app.include_router(report_router)
+    app.include_router(logs_router)
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

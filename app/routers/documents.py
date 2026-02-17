@@ -21,6 +21,9 @@ from app.services.s3_storage import S3Storage, get_s3_storage
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
+# In-memory task logs for UI: task_id -> {"lines": list[str], "finished": bool}
+_TASK_LOGS: dict[str, dict] = {}
+
 
 # --- Response Models ---
 
@@ -51,7 +54,8 @@ async def collect_documents(
 ):
     """Trigger document collection for a company."""
     task_id = str(uuid4())
-    
+    _TASK_LOGS[task_id] = {"lines": [], "finished": False}
+
     background_tasks.add_task(
         _run_document_collection,
         task_id=task_id,
@@ -67,6 +71,15 @@ async def collect_documents(
         status="queued",
         message=f"Document collection started for company {request.company_id}"
     )
+
+
+@router.get("/collect/logs/{task_id}")
+async def get_collect_logs(task_id: str):
+    """Get log lines for a document collection task (for UI scrollable log view)."""
+    if task_id not in _TASK_LOGS:
+        return {"task_id": task_id, "logs": [], "finished": False}
+    entry = _TASK_LOGS[task_id]
+    return {"task_id": task_id, "logs": entry["lines"], "finished": entry["finished"]}
 
 
 @router.get("", response_model=PaginatedDocuments)
@@ -205,29 +218,35 @@ def _run_document_collection(
     db: SnowflakeService,
     s3: S3Storage
 ):
-    """Background task for document collection with S3 upload."""
-    logger.info(f"Starting document collection task {task_id} for company {company_id}")
-    
+    """Background task for document collection with S3 upload. Appends logs to _TASK_LOGS for UI."""
+    def log(msg: str, level: str = "info"):
+        logger.info(msg) if level == "info" else logger.warning(msg) if level == "warning" else logger.error(msg)
+        if task_id in _TASK_LOGS:
+            _TASK_LOGS[task_id]["lines"].append(msg)
+
+    log(f"Starting document collection task {task_id} for company {company_id}")
+
     try:
         from pathlib import Path
         from app.pipelines import SECEdgarPipeline, DocumentParser, SemanticChunker
         from app.config import get_settings
-        
+
         settings = get_settings()
-        
+
         # Get company info from database
         company = db.execute_one(
             "SELECT id, ticker, name FROM companies WHERE id = %s AND is_deleted = FALSE",
             (str(company_id),)
         )
-        
+
         if not company:
-            logger.error(f"Task {task_id}: Company {company_id} not found")
+            log(f"Task {task_id}: Company {company_id} not found", "error")
+            _TASK_LOGS[task_id]["finished"] = True
             return
-        
+
         ticker = company["ticker"]
-        logger.info(f"Task {task_id}: Collecting documents for {ticker}")
-        
+        log(f"Task {task_id}: Collecting documents for {ticker}")
+
         # Initialize pipelines
         email = getattr(settings, 'sec_edgar_email', 'student@university.edu')
         pipeline = SECEdgarPipeline(
@@ -236,7 +255,7 @@ def _run_document_collection(
         )
         parser = DocumentParser()
         chunker = SemanticChunker()
-        
+
         # Download filings
         after_date = f"{datetime.now().year - years_back}-01-01"
         filings = pipeline.download_filings(
@@ -245,26 +264,26 @@ def _run_document_collection(
             limit=10,
             after=after_date
         )
-        logger.info(f"Task {task_id}: Downloaded {len(filings)} filings for {ticker}")
-        
+        log(f"Task {task_id}: Downloaded {len(filings)} filings for {ticker}")
+
         # Process each filing
         docs_processed = 0
         for filing_path in filings:
             try:
                 filing_path = Path(filing_path)
-                
+
                 # Parse document
                 parsed = parser.parse_filing(filing_path, ticker)
-                
+
                 # Check for duplicate by content hash
                 existing = db.execute_one(
                     "SELECT id FROM documents WHERE content_hash = %s",
                     (parsed.content_hash,)
                 )
                 if existing:
-                    logger.info(f"Task {task_id}: Skipping duplicate {parsed.filing_type}")
+                    log(f"Task {task_id}: Skipping duplicate {parsed.filing_type}")
                     continue
-                
+
                 # Upload to S3
                 filing_date_str = parsed.filing_date.strftime("%Y-%m-%d")
                 s3_key = s3.upload_sec_filing(
@@ -276,7 +295,7 @@ def _run_document_collection(
                 )
 
                 if not s3_key:
-                    logger.warning(f"Task {task_id}: Failed to upload to S3, continuing without S3 key")
+                    log(f"Task {task_id}: Failed to upload to S3, continuing without S3 key", "warning")
 
                 # Convert and upload sibling primary documents as PDF to S3
                 accession_dir = filing_path.parent
@@ -288,7 +307,7 @@ def _run_document_collection(
                         local_path=sibling,
                         content_hash=parsed.content_hash
                     )
-                
+
                 # Insert document record
                 doc_id = db.insert_document(
                     company_id=company_id,
@@ -301,7 +320,7 @@ def _run_document_collection(
                     s3_key=s3_key,
                     status="parsed"
                 )
-                
+
                 # Chunk document
                 parsed.document_id = doc_id
                 chunks = chunker.chunk_document(parsed)
@@ -316,18 +335,18 @@ def _run_document_collection(
                     }
                     for c in chunks
                 ]
-                
+
                 # Insert chunks
                 db.insert_chunks(doc_id, chunk_dicts)
-                
+
                 # Update document status
                 db.update_document_status(doc_id, "chunked", chunk_count=len(chunks))
-                
+
                 docs_processed += 1
-                logger.info(f"Task {task_id}: Processed {parsed.filing_type} ({len(chunks)} chunks, S3: {s3_key is not None})")
-                
+                log(f"Task {task_id}: Processed {parsed.filing_type} ({len(chunks)} chunks, S3: {s3_key is not None})")
+
             except Exception as e:
-                logger.error(f"Task {task_id}: Error processing {filing_path}: {e}")
+                log(f"Task {task_id}: Error processing {filing_path}: {e}", "error")
                 # Insert failed document record
                 try:
                     doc_id = db.insert_document(
@@ -341,8 +360,9 @@ def _run_document_collection(
                     db.update_document_status(doc_id, "failed", error_message=str(e))
                 except Exception:
                     pass
-        
-        logger.info(f"Task {task_id} completed: {docs_processed}/{len(filings)} documents processed")
-        
+
+        log(f"Task {task_id} completed: {docs_processed}/{len(filings)} documents processed")
     except Exception as e:
-        logger.error(f"Task {task_id} failed: {e}")
+        log(f"Task {task_id} failed: {e}", "error")
+    finally:
+        _TASK_LOGS[task_id]["finished"] = True

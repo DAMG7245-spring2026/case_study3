@@ -487,7 +487,7 @@ case_study2/
 │   ├── models/
 │   │   ├── document.py             # Pydantic models
 │   │   ├── signal.py
-│   │   └── evidence.py             # TARGET_COMPANIES
+│   │   └── evidence.py             # Evidence models (companies from DB)
 │   ├── pipelines/
 │   │   ├── sec_edgar.py            # SEC downloader
 │   │   ├── document_parser.py      # iXBRL cleaning + section extraction

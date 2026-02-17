@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS companies (
     industry_id VARCHAR(36),
     position_factor DECIMAL(4,3) DEFAULT 0.0,
     is_deleted BOOLEAN DEFAULT FALSE,
+    domain VARCHAR(500),
+    careers_url VARCHAR(500),
+    news_url VARCHAR(500),
+    leadership_url VARCHAR(500),
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     updated_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
@@ -139,4 +143,17 @@ CREATE TABLE IF NOT EXISTS company_signal_summaries (
     composite_score DECIMAL(5,2),
     signal_count INT,
     last_updated TIMESTAMP_NTZ
+);
+
+-- =====================================================
+-- Raw collected signal data (before compute)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS signal_raw_collections (
+    id VARCHAR(36) PRIMARY KEY,
+    company_id VARCHAR(36) NOT NULL,
+    category VARCHAR(30) NOT NULL,
+    collected_at TIMESTAMP_NTZ NOT NULL,
+    payload VARIANT NOT NULL,
+    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UNIQUE(company_id, category)
 );

@@ -421,6 +421,56 @@ class SnowflakeService:
         result = self.execute_one(query, tuple(params) if params else None)
         return result["count"] if result else 0
 
+    def delete_signals_by_company_and_category(
+        self,
+        company_id: UUID,
+        category: str,
+    ) -> None:
+        """Delete all signals for a company and category (e.g. before re-computing from raw)."""
+        self.execute_write(
+            "DELETE FROM external_signals WHERE company_id = %s AND category = %s",
+            (str(company_id), category),
+        )
+
+    def insert_or_replace_raw_collection(
+        self,
+        company_id: UUID,
+        category: str,
+        payload: list[dict[str, Any]] | dict[str, Any],
+    ) -> str:
+        """Insert or replace raw collection for (company_id, category). Payload is JSON-serializable (list or dict). Returns id."""
+        rid = str(uuid4())
+        now = datetime.now(timezone.utc)
+        payload_json = json.dumps(payload, default=str)
+        cid = str(company_id)
+        # Snowflake MERGE or DELETE+INSERT for replace semantics
+        self.execute_write(
+            "DELETE FROM signal_raw_collections WHERE company_id = %s AND category = %s",
+            (cid, category),
+        )
+        query = """
+            INSERT INTO signal_raw_collections (id, company_id, category, collected_at, payload)
+            SELECT %s, %s, %s, %s, PARSE_JSON(%s)
+        """
+        self.execute_write(query, (rid, cid, category, now, payload_json))
+        return rid
+
+    def get_raw_collection(
+        self,
+        company_id: UUID,
+        category: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get raw collection row for (company_id, category). Returns dict with id, company_id, category, collected_at, payload (parsed)."""
+        row = self.execute_one(
+            "SELECT id, company_id, category, collected_at, payload FROM signal_raw_collections WHERE company_id = %s AND category = %s",
+            (str(company_id), category),
+        )
+        if not row or not row.get("payload"):
+            return None
+        if isinstance(row["payload"], str):
+            row["payload"] = json.loads(row["payload"])
+        return row
+
     # ================================================================
     # CS2: Signal Summary Methods
     # ================================================================
@@ -567,8 +617,10 @@ class SnowflakeService:
         return self.execute_one(query, (ticker.upper(),))
 
     def get_company_by_id(self, company_id: UUID) -> Optional[dict[str, Any]]:
-        """Get company by ID (returns id, name, ticker, etc.)."""
-        query = "SELECT id, name, ticker FROM companies WHERE id = %s AND is_deleted = FALSE"
+        """Get company by ID (returns full row including URL columns)."""
+        query = """SELECT id, name, ticker, industry_id, position_factor,
+            domain, careers_url, news_url, leadership_url, created_at, updated_at
+            FROM companies WHERE id = %s AND is_deleted = FALSE"""
         return self.execute_one(query, (str(company_id),))
 
     def get_or_create_company(

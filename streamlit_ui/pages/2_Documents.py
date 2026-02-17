@@ -1,0 +1,87 @@
+"""Documents: run pipeline and view server logs."""
+import streamlit as st
+
+from streamlit_ui.components.api_client import (
+    get_client,
+    get_companies,
+    collect_documents,
+    get_document_collection_logs,
+)
+from streamlit_ui.utils.config import get_api_url
+
+st.set_page_config(page_title="Documents | PE Org-AI-R", page_icon="📄", layout="wide")
+st.title("Documents")
+st.caption("Run the documents pipeline for a company and view server logs below.")
+
+api_url = get_api_url()
+client = get_client()
+
+# --- Run documents pipeline ---
+st.subheader("Run documents pipeline")
+companies_data = get_companies(client)
+companies_items = companies_data.get("items") or []
+company_options = [(f"{c.get('ticker', '')} — {c.get('name', '')}", str(c["id"])) for c in companies_items if c.get("id") and c.get("ticker")]
+FILING_TYPES = ["10-K", "10-Q", "8-K", "DEF-14A"]
+
+if not company_options:
+    st.caption("Add at least one company (Companies page) to run the pipeline.")
+else:
+    with st.form("run_documents_pipeline"):
+        company_labels = [x[0] for x in company_options]
+        company_ids = [x[1] for x in company_options]
+        sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
+        st.caption("Select which filing types to collect:")
+        filing_10k = st.checkbox("10-K", value=True, key="ft_10k")
+        filing_10q = st.checkbox("10-Q", value=True, key="ft_10q")
+        filing_8k = st.checkbox("8-K", value=True, key="ft_8k")
+        filing_def14a = st.checkbox("DEF-14A", value=False, key="ft_def14a")
+        years_back = st.number_input("Years back", min_value=1, max_value=10, value=3, key="years_back_run")
+        run_clicked = st.form_submit_button("Run documents pipeline")
+    if run_clicked:
+        selected_filings = []
+        if filing_10k:
+            selected_filings.append("10-K")
+        if filing_10q:
+            selected_filings.append("10-Q")
+        if filing_8k:
+            selected_filings.append("8-K")
+        if filing_def14a:
+            selected_filings.append("DEF-14A")
+        if not selected_filings:
+            st.error("Select at least one filing type.")
+        else:
+            company_id = company_ids[sel_idx]
+            try:
+                resp = collect_documents(company_id, selected_filings, years_back=years_back, client=client)
+                task_id = resp.get("task_id", "")
+                st.session_state["documents_task_id"] = task_id
+                st.success("Collection started. Server logs will appear below (scrollable).")
+            except Exception as e:
+                st.error(f"Failed to start collection: {e}")
+
+    # Pipeline log: fetch on load or when Refresh is clicked (no auto-polling)
+    task_id = st.session_state.get("documents_task_id")
+    if task_id:
+        st.markdown("**Pipeline log**")
+        if st.button("Refresh log", key="documents_refresh_log"):
+            st.rerun()
+        try:
+            data = get_document_collection_logs(task_id, client=client)
+            logs = data.get("logs") or []
+            finished = data.get("finished", False)
+        except Exception:
+            logs = ["(Could not fetch logs from server.)"]
+            finished = False
+        status = " (finished)" if finished else " (running)"
+        st.caption(f"Task status:{status} Click Refresh log to update.")
+        log_text = "\n".join(logs) if logs else "(waiting for logs…)"
+        st.text_area(
+            "Log output",
+            value=log_text,
+            height=220,
+            disabled=True,
+            label_visibility="collapsed",
+            key="documents_pipeline_log_output",
+        )
+
+client.close()

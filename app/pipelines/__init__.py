@@ -11,6 +11,7 @@ from app.pipelines.digital_presence_signals import (
 )
 from app.pipelines.patent_signals import PatentSignalCollector
 from app.pipelines.leadership_signals import LeadershipSignalCollector
+from app.pipelines.glassdoor_collector import fetch_reviews as fetch_glassdoor_reviews
 
 __all__ = [
     "SECEdgarPipeline",
@@ -22,4 +23,5 @@ __all__ = [
     "NewsSignalCollector",
     "PatentSignalCollector",
     "LeadershipSignalCollector",
+    "fetch_glassdoor_reviews",
 ]

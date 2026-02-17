@@ -13,6 +13,25 @@ from app.services import get_snowflake_service, get_redis_cache, CacheKeys
 
 router = APIRouter(prefix="/api/v1/companies", tags=["Companies"])
 
+_COMPANY_COLS = "id, name, ticker, industry_id, position_factor, domain, careers_url, news_url, leadership_url, created_at, updated_at"
+
+
+def _row_to_company_response(row: dict) -> CompanyResponse:
+    """Build CompanyResponse from DB row (with URL columns)."""
+    return CompanyResponse(
+        id=UUID(row["id"]),
+        name=row["name"],
+        ticker=row["ticker"],
+        industry_id=UUID(row["industry_id"]),
+        position_factor=float(row["position_factor"] or 0),
+        domain=row.get("domain"),
+        careers_url=row.get("careers_url"),
+        news_url=row.get("news_url"),
+        leadership_url=row.get("leadership_url"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"]
+    )
+
 
 @router.post(
     "",
@@ -23,9 +42,24 @@ router = APIRouter(prefix="/api/v1/companies", tags=["Companies"])
 async def create_company(company: CompanyCreate):
     """Create a new company."""
     db = get_snowflake_service()
-    company_id = str(uuid4())
-    now = datetime.now(timezone.utc)
-    
+    ticker_norm = (company.ticker or "").strip().upper()
+    if not ticker_norm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ticker is required"
+        )
+
+    # Reject duplicate ticker
+    existing = db.execute_one(
+        "SELECT id FROM companies WHERE ticker = %s AND is_deleted = FALSE",
+        (ticker_norm,)
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A company with this ticker already exists."
+        )
+
     # Verify industry exists
     industry = db.execute_one(
         "SELECT id FROM industries WHERE id = %s",
@@ -36,26 +70,30 @@ async def create_company(company: CompanyCreate):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Industry {company.industry_id} not found"
         )
-    
-    # Insert company
+
+    company_id = str(uuid4())
+    now = datetime.now(timezone.utc)
+
     db.execute_write(
         """
-        INSERT INTO companies (id, name, ticker, industry_id, position_factor, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO companies (id, name, ticker, industry_id, position_factor,
+            domain, careers_url, news_url, leadership_url, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (company_id, company.name, company.ticker, str(company.industry_id),
-         company.position_factor, now, now)
+        (
+            company_id, company.name, ticker_norm, str(company.industry_id),
+            company.position_factor,
+            company.domain or None, company.careers_url or None,
+            company.news_url or None, company.leadership_url or None,
+            now, now
+        )
     )
-    
-    return CompanyResponse(
-        id=UUID(company_id),
-        name=company.name,
-        ticker=company.ticker,
-        industry_id=company.industry_id,
-        position_factor=company.position_factor,
-        created_at=now,
-        updated_at=now
+
+    row = db.execute_one(
+        "SELECT id, name, ticker, industry_id, position_factor, domain, careers_url, news_url, leadership_url, created_at, updated_at FROM companies WHERE id = %s",
+        (company_id,)
     )
+    return _row_to_company_response(row)
 
 
 @router.get(
@@ -86,27 +124,14 @@ async def list_companies(
     # Get paginated results
     offset = (page - 1) * page_size
     query = f"""
-        SELECT id, name, ticker, industry_id, position_factor, created_at, updated_at
+        SELECT {_COMPANY_COLS}
         {base_query}
         ORDER BY created_at DESC
         LIMIT %s OFFSET %s
     """
     params.extend([page_size, offset])
-    
     rows = db.execute_query(query, tuple(params))
-    
-    items = [
-        CompanyResponse(
-            id=UUID(row["id"]),
-            name=row["name"],
-            ticker=row["ticker"],
-            industry_id=UUID(row["industry_id"]),
-            position_factor=float(row["position_factor"]),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"]
-        )
-        for row in rows
-    ]
+    items = [_row_to_company_response(row) for row in rows]
     
     return PaginatedResponse(
         items=items,
@@ -136,28 +161,15 @@ async def get_company(company_id: UUID):
     # Fetch from database
     db = get_snowflake_service()
     row = db.execute_one(
-        """
-        SELECT id, name, ticker, industry_id, position_factor, created_at, updated_at
-        FROM companies WHERE id = %s AND is_deleted = FALSE
-        """,
+        f"SELECT {_COMPANY_COLS} FROM companies WHERE id = %s AND is_deleted = FALSE",
         (str(company_id),)
     )
-    
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Company {company_id} not found"
         )
-    
-    company = CompanyResponse(
-        id=UUID(row["id"]),
-        name=row["name"],
-        ticker=row["ticker"],
-        industry_id=UUID(row["industry_id"]),
-        position_factor=float(row["position_factor"]),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"]
-    )
+    company = _row_to_company_response(row)
     
     # Cache for 5 minutes
     cache.set(cache_key, company, settings.cache_ttl_company)
@@ -186,18 +198,18 @@ async def update_company(company_id: UUID, update: CompanyUpdate):
             detail=f"Company {company_id} not found"
         )
     
-    # Build update query dynamically
+    # Build update query dynamically (only allowed columns)
+    allowed = {"name", "ticker", "industry_id", "position_factor", "domain", "careers_url", "news_url", "leadership_url"}
     updates = []
     params = []
     update_data = update.model_dump(exclude_unset=True)
-    
     for field, value in update_data.items():
-        if value is not None:
-            if field == "industry_id":
-                value = str(value)
-            updates.append(f"{field} = %s")
-            params.append(value)
-    
+        if field not in allowed:
+            continue
+        if field == "industry_id" and value is not None:
+            value = str(value)
+        updates.append(f"{field} = %s")
+        params.append(value)
     if not updates:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -1,31 +1,38 @@
 #!/usr/bin/env python
 """
-Backfill evidence for all 10 target companies.
+Backfill evidence for all companies in the database.
 
-This script ensures all target companies exist in the database
-and have evidence collection triggered.
+Gets ticker list from Snowflake and runs evidence collection.
 """
 
-import asyncio
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.collect_evidence import TARGET_COMPANIES, main
+from app.services.snowflake import get_snowflake_service
+from scripts.collect_evidence import main
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("Backfilling Evidence for All Target Companies")
-    print("="*60 + "\n")
+    db = get_snowflake_service()
+    rows = db.execute_query(
+        "SELECT ticker, name FROM companies WHERE is_deleted = FALSE AND ticker IS NOT NULL ORDER BY ticker"
+    )
+    tickers = [r["ticker"] for r in (rows or []) if r.get("ticker")]
 
-    companies = list(TARGET_COMPANIES.keys())
+    print("\n" + "=" * 60)
+    print("Backfilling Evidence for Companies in DB")
+    print("=" * 60 + "\n")
+    print(f"Processing {len(tickers)} companies from Snowflake:")
+    for r in (rows or []):
+        if r.get("ticker"):
+            print(f"  - {r['ticker']}: {r.get('name', '')}")
+    print("\n" + "=" * 60 + "\n")
 
-    print(f"Processing {len(companies)} companies:")
-    for ticker in companies:
-        info = TARGET_COMPANIES[ticker]
-        print(f"  - {ticker}: {info['name']} ({info['sector']})")
+    if not tickers:
+        print("No companies in DB. Add them via the UI or run scripts/seed_target_companies.py")
+        sys.exit(1)
 
-    print("\n" + "="*60 + "\n")
-
-    asyncio.run(main(companies))
+    # Run collect_evidence with --companies ticker1,ticker2,...
+    sys.argv = [sys.argv[0], "--companies", ",".join(tickers)]
+    main()

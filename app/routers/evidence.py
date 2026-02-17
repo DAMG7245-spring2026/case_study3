@@ -13,7 +13,6 @@ from app.models.evidence import (
     EvidenceStats,
     BackfillRequest,
     BackfillResponse,
-    TARGET_COMPANIES,
 )
 from app.models.document import DocumentResponse
 from app.models.signal import CompanySignalSummaryResponse, ExternalSignalResponse, SignalSource
@@ -43,15 +42,11 @@ async def get_company_evidence(
     summary_data = db.get_signal_summary(company_id)
     signal_summary = CompanySignalSummaryResponse(**summary_data) if summary_data else None
     
-    # Get company info
-    ticker = docs[0]["ticker"] if docs else "UNKNOWN"
-    company_name = "Unknown"
-    
-    for t, info in TARGET_COMPANIES.items():
-        if t == ticker:
-            company_name = info["name"]
-            break
-    
+    # Get company info from DB
+    company_row = db.get_company_by_id(company_id)
+    ticker = company_row["ticker"] if company_row else (docs[0]["ticker"] if docs else "UNKNOWN")
+    company_name = (company_row["name"] if company_row else "Unknown")
+
     return CompanyEvidence(
         company_id=company_id,
         ticker=ticker,
@@ -72,21 +67,30 @@ async def backfill_evidence(
     db: SnowflakeService = Depends(get_snowflake_service),
     s3: S3Storage = Depends(get_s3_storage)
 ):
-    """Backfill evidence for multiple companies."""
+    """Backfill evidence for multiple companies (resolved from DB)."""
     task_id = str(uuid4())
-    
-    # Determine which companies to process
+
     if request.tickers:
-        tickers = [t.upper() for t in request.tickers if t.upper() in TARGET_COMPANIES]
+        tickers = []
+        for t in request.tickers:
+            tnorm = (t or "").strip().upper()
+            if not tnorm:
+                continue
+            company = db.get_company_by_ticker(tnorm)
+            if company:
+                tickers.append(tnorm)
     else:
-        tickers = list(TARGET_COMPANIES.keys())
-    
+        rows = db.execute_query(
+            "SELECT ticker FROM companies WHERE is_deleted = FALSE AND ticker IS NOT NULL"
+        )
+        tickers = [r["ticker"] for r in (rows or []) if r.get("ticker")]
+
     if not tickers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid tickers provided"
+            detail="No valid companies to process. Add companies first or select existing tickers."
         )
-    
+
     background_tasks.add_task(
         _run_backfill,
         task_id=task_id,
@@ -97,7 +101,7 @@ async def backfill_evidence(
         db=db,
         s3=s3
     )
-    
+
     return BackfillResponse(
         task_id=task_id,
         status="queued",
@@ -128,15 +132,31 @@ async def get_evidence_stats(
 
 
 @router.get("/target-companies")
-async def get_target_companies():
-    """Get list of target companies for this case study."""
-    return {
-        "companies": [
-            {"ticker": ticker, **info}
-            for ticker, info in TARGET_COMPANIES.items()
-        ],
-        "count": len(TARGET_COMPANIES)
-    }
+async def get_target_companies(db: SnowflakeService = Depends(get_snowflake_service)):
+    """Get list of companies from DB (target companies for evidence/backfill)."""
+    rows = db.execute_query("""
+        SELECT c.id, c.name, c.ticker, c.domain, c.careers_url, c.news_url, c.leadership_url,
+               i.name AS industry_name
+        FROM companies c
+        LEFT JOIN industries i ON i.id = c.industry_id
+        WHERE c.is_deleted = FALSE
+        ORDER BY c.ticker
+    """)
+    if not rows:
+        return {"companies": [], "count": 0}
+    companies = []
+    for r in rows:
+        companies.append({
+            "id": str(r["id"]),
+            "ticker": r["ticker"],
+            "name": r["name"],
+            "industry": r.get("industry_name") or "",
+            "domain": r.get("domain"),
+            "careers_url": r.get("careers_url"),
+            "news_url": r.get("news_url"),
+            "leadership_url": r.get("leadership_url"),
+        })
+    return {"companies": companies, "count": len(companies)}
 
 
 # --- Background Tasks ---
@@ -165,28 +185,26 @@ def _run_backfill(
     
     for ticker in tickers:
         try:
-            company_info = TARGET_COMPANIES[ticker]
-            logger.info(f"Task {task_id}: Processing {ticker} - {company_info['name']}")
-            
-            # Get or create company
-            industry_result = db.execute_one(
-                "SELECT id FROM industries WHERE name = %s",
-                (company_info["industry"],)
-            )
-            
-            if not industry_result:
-                logger.warning(f"Task {task_id}: Industry {company_info['industry']} not found, skipping {ticker}")
+            company_row = db.get_company_by_ticker(ticker)
+            if not company_row:
+                logger.warning(f"Task {task_id}: Company {ticker} not found in DB, skipping")
                 stats["errors"] += 1
                 continue
-            
-            industry_id = UUID(industry_result["id"])
-            
-            company = db.get_or_create_company(
-                ticker=ticker,
-                name=company_info["name"],
-                industry_id=industry_id
+            company_id = UUID(company_row["id"])
+            industry_name_row = db.execute_one(
+                "SELECT name FROM industries WHERE id = %s",
+                (company_row["industry_id"],)
             )
-            company_id = UUID(company["id"])
+            industry_name = industry_name_row["name"] if industry_name_row else ""
+            company_info = {
+                "name": company_row["name"],
+                "industry": industry_name,
+                "domain": company_row.get("domain") or "",
+                "careers_url": company_row.get("careers_url"),
+                "news_url": company_row.get("news_url"),
+                "leadership_url": company_row.get("leadership_url"),
+            }
+            logger.info(f"Task {task_id}: Processing {ticker} - {company_info['name']}")
             
             # ========== DOCUMENTS ==========
             if include_documents:

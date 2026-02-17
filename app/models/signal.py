@@ -14,6 +14,7 @@ class SignalCategory(str, Enum):
     INNOVATION_ACTIVITY = "innovation_activity"
     DIGITAL_PRESENCE = "digital_presence"
     LEADERSHIP_SIGNALS = "leadership_signals"
+    GLASSDOOR_REVIEWS = "glassdoor_reviews"
 
 
 class SignalSource(str, Enum):

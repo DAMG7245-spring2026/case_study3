@@ -19,7 +19,6 @@ from uuid import UUID, uuid4
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.models.evidence import TARGET_COMPANIES
 from app.models.signal import SignalSource
 from app.pipelines import (
     SECEdgarPipeline,
@@ -83,27 +82,11 @@ class EvidenceCollector:
             "errors": 0
         }
 
-    def get_or_create_company(self, ticker: str) -> UUID:
-        """Get or create company in database."""
-        company_info = TARGET_COMPANIES[ticker]
-        
-        # Get industry_id
-        industry_result = self.db.execute_one(
-            "SELECT id FROM industries WHERE name = %s",
-            (company_info["industry"],)
-        )
-        
-        if not industry_result:
-            raise ValueError(f"Industry '{company_info['industry']}' not found in database")
-        
-        industry_id = UUID(industry_result["id"])
-        
-        company = self.db.get_or_create_company(
-            ticker=ticker,
-            name=company_info["name"],
-            industry_id=industry_id
-        )
-        
+    def get_company_id(self, ticker: str) -> UUID | None:
+        """Get company ID from database by ticker. Returns None if not found."""
+        company = self.db.get_company_by_ticker(ticker)
+        if not company:
+            return None
         return UUID(company["id"])
 
     def collect_documents(self, ticker: str, company_id: UUID, years_back: int = 3) -> int:
@@ -220,11 +203,15 @@ class EvidenceCollector:
         return docs_processed
 
     def collect_signals(self, ticker: str, company_id: UUID) -> int:
-        """Collect external signals for a company using real API fetches."""
+        """Collect external signals for a company using real API fetches. Company data from DB."""
         logger.info(f"📊 Collecting signals for {ticker}")
 
-        company_info = TARGET_COMPANIES[ticker]
-        domain = company_info.get("domain", "")
+        company = self.db.get_company_by_id(company_id)
+        if not company:
+            logger.warning(f"Company {company_id} not found in DB")
+            return 0
+        company_name = company.get("name") or "Unknown"
+        domain = company.get("domain") or ""
         settings = get_settings()
 
         hiring_score = 0.0
@@ -235,18 +222,18 @@ class EvidenceCollector:
         try:
             # Job postings: collect from careers page, SerpAPI, and JobSpy; merge and dedupe
             postings: list = []
-            careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
+            careers_url = company.get("careers_url") if isinstance(company.get("careers_url"), str) else None
             if careers_url:
                 postings.extend(
-                    self.job_collector.fetch_postings_from_careers_page(careers_url, company_info["name"])
+                    self.job_collector.fetch_postings_from_careers_page(careers_url, company_name)
                 )
             serp_postings = self.job_collector.fetch_postings(
-                company_info["name"], api_key=settings.serpapi_key or None
+                company_name, api_key=settings.serpapi_key or None
             )
             if serp_postings:
                 postings.extend(serp_postings)
             jobspy_postings = self.job_collector.fetch_postings_from_jobspy(
-                company_info["name"], location="United States", results_wanted=20
+                company_name, location="United States", results_wanted=20
             )
             if jobspy_postings:
                 postings.extend(jobspy_postings)
@@ -256,7 +243,7 @@ class EvidenceCollector:
             used_jobspy = bool(jobspy_postings)
             if postings:
                 job_signal = self.job_collector.analyze_job_postings(
-                    company_info["name"], postings, company_id
+                    company_name, postings, company_id
                 )
                 sources_used = []
                 if used_careers:
@@ -291,7 +278,7 @@ class EvidenceCollector:
                 logger.info(f"   ✅ Hiring signal: {job_signal.normalized_score:.1f}")
 
             # Digital presence (BuiltWith + company news)
-            news_url = company_info.get("news_url") if isinstance(company_info.get("news_url"), str) else None
+            news_url = company.get("news_url") if isinstance(company.get("news_url"), str) else None
             dp_signals, digital_score = self.digital_presence_collector.collect(
                 company_id=company_id,
                 ticker=ticker,
@@ -315,7 +302,7 @@ class EvidenceCollector:
 
             # Patent signal (Lens)
             patents = self.patent_collector.fetch_patents(
-                company_info["name"], api_key=settings.lens_api_key or None
+                company_name, api_key=settings.lens_api_key or None
             )
             if patents:
                 patent_signal = self.patent_collector.analyze_patents(company_id, patents)
@@ -335,7 +322,7 @@ class EvidenceCollector:
 
             # Leadership signals: try company-specific leadership_url first, else domain paths
             leadership_collector = LeadershipSignalCollector()
-            leadership_url = company_info.get("leadership_url") if isinstance(company_info.get("leadership_url"), str) else None
+            leadership_url = company.get("leadership_url") if isinstance(company.get("leadership_url"), str) else None
             if leadership_url:
                 website_data = leadership_collector.fetch_leadership_page(leadership_url)
             else:
@@ -390,28 +377,27 @@ class EvidenceCollector:
         include_signals: bool = True,
         years_back: int = 3
     ) -> dict:
-        """Collect all evidence for a single company."""
-        if ticker not in TARGET_COMPANIES:
-            logger.warning(f"Unknown ticker: {ticker}")
+        """Collect all evidence for a single company. Company must exist in DB."""
+        company = self.db.get_company_by_ticker(ticker)
+        if not company:
+            logger.warning(f"Company {ticker} not in DB; add it via the Companies UI or run seed_target_companies.py")
             return {}
-        
-        company_info = TARGET_COMPANIES[ticker]
-        
+
+        company_id = UUID(company["id"])
+        company_name = company.get("name") or ticker
+
         logger.info(f"\n{'='*60}")
-        logger.info(f"🏢 Processing {ticker} - {company_info['name']}")
-        logger.info(f"   Sector: {company_info['sector']} | Industry: {company_info['industry']}")
+        logger.info(f"🏢 Processing {ticker} - {company_name}")
         logger.info(f"{'='*60}")
-        
+
         result = {
             "ticker": ticker,
-            "name": company_info["name"],
+            "name": company_name,
             "documents_collected": 0,
             "signals_collected": 0,
         }
-        
+
         try:
-            # Get or create company
-            company_id = self.get_or_create_company(ticker)
             logger.info(f"   Company ID: {company_id}")
             
             if include_documents:
@@ -511,18 +497,25 @@ Examples:
     
     args = parser.parse_args()
     
-    # Determine companies to process
+    # Determine companies to process (from DB)
+    db = get_snowflake_service()
     if args.companies.lower() == "all":
-        tickers = list(TARGET_COMPANIES.keys())
+        rows = db.execute_query(
+            "SELECT ticker FROM companies WHERE is_deleted = FALSE AND ticker IS NOT NULL"
+        )
+        tickers = [r["ticker"] for r in (rows or []) if r.get("ticker")]
     else:
         tickers = [t.strip().upper() for t in args.companies.split(",")]
-        invalid = [t for t in tickers if t not in TARGET_COMPANIES]
-        if invalid:
-            logger.warning(f"Unknown tickers (skipping): {', '.join(invalid)}")
-            tickers = [t for t in tickers if t in TARGET_COMPANIES]
-    
+        valid = []
+        for t in tickers:
+            if db.get_company_by_ticker(t):
+                valid.append(t)
+            else:
+                logger.warning(f"Ticker {t} not in DB (skipping); add via Companies UI or seed_target_companies.py")
+        tickers = valid
+
     if not tickers:
-        logger.error("No valid tickers to process")
+        logger.error("No valid tickers to process. Add companies in the UI or run scripts/seed_target_companies.py")
         sys.exit(1)
     
     # Determine what to collect

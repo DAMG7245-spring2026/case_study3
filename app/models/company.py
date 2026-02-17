@@ -31,12 +31,16 @@ class CompanyBase(BaseModel):
     ticker: Optional[str] = Field(None, max_length=10)
     industry_id: UUID
     position_factor: float = Field(
-        default=0.0, 
-        ge=-1.0, 
+        default=0.0,
+        ge=-1.0,
         le=1.0,
         description="Market position factor (-1.0 to 1.0)"
     )
-    
+    domain: Optional[str] = Field(None, max_length=500)
+    careers_url: Optional[str] = Field(None, max_length=500)
+    news_url: Optional[str] = Field(None, max_length=500)
+    leadership_url: Optional[str] = Field(None, max_length=500)
+
     @field_validator("ticker")
     @classmethod
     def uppercase_ticker(cls, v: Optional[str]) -> Optional[str]:
@@ -55,7 +59,11 @@ class CompanyUpdate(BaseModel):
     ticker: Optional[str] = Field(None, max_length=10)
     industry_id: Optional[UUID] = None
     position_factor: Optional[float] = Field(None, ge=-1.0, le=1.0)
-    
+    domain: Optional[str] = Field(None, max_length=500)
+    careers_url: Optional[str] = Field(None, max_length=500)
+    news_url: Optional[str] = Field(None, max_length=500)
+    leadership_url: Optional[str] = Field(None, max_length=500)
+
     @field_validator("ticker")
     @classmethod
     def uppercase_ticker(cls, v: Optional[str]) -> Optional[str]:

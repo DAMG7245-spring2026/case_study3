@@ -88,7 +88,6 @@ from app.models.evidence import (
     EvidenceStats,
     BackfillRequest,
     BackfillResponse,
-    TARGET_COMPANIES,
 )
 
 __all__ = [
@@ -158,5 +157,4 @@ __all__ = [
     "EvidenceStats",
     "BackfillRequest",
     "BackfillResponse",
-    "TARGET_COMPANIES",
 ]

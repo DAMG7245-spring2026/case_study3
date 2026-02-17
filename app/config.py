@@ -1,6 +1,6 @@
 """Configuration management using Pydantic Settings."""
 from functools import lru_cache
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     lens_api_key: str = Field(default="", validation_alias="LENS_API_KEY")
     # Optional: third-party LinkedIn company/exec data API (e.g. RapidAPI); if empty, LinkedIn source is skipped
     linkedin_api_key: str = Field(default="", validation_alias="LINKEDIN_API_KEY")
+    # Optional: ScrapFly API key for Glassdoor scraping; if empty, Glassdoor collection is skipped
+    scrapfly_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SCRAPFLY_API_KEY", "SCRAPFLY_KEY"),
+    )
 
 
 @lru_cache
