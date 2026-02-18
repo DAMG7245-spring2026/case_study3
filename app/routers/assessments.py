@@ -42,24 +42,22 @@ async def create_assessment(assessment: AssessmentCreate):
     
     db.execute_write(
         """
-        INSERT INTO assessments 
-        (id, company_id, assessment_type, assessment_date, status, 
-         primary_assessor, secondary_assessor, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO assessments
+        (id, company_id, assessment_type, assessment_date, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
         (assessment_id, str(assessment.company_id), assessment.assessment_type.value,
-         assessment.assessment_date, AssessmentStatus.DRAFT.value,
-         assessment.primary_assessor, assessment.secondary_assessor, now)
+         assessment.assessment_date, AssessmentStatus.DRAFT.value, now)
     )
-    
+
     return AssessmentResponse(
         id=UUID(assessment_id),
         company_id=assessment.company_id,
         assessment_type=assessment.assessment_type,
         assessment_date=assessment.assessment_date,
         status=AssessmentStatus.DRAFT,
-        primary_assessor=assessment.primary_assessor,
-        secondary_assessor=assessment.secondary_assessor,
+        h_r_score=None,
+        synergy=None,
         v_r_score=None,
         confidence_lower=None,
         confidence_upper=None,
@@ -104,7 +102,7 @@ async def list_assessments(
     offset = (page - 1) * page_size
     query = f"""
         SELECT id, company_id, assessment_type, assessment_date, status,
-               primary_assessor, secondary_assessor, v_r_score, 
+               h_r_score, synergy, v_r_score,
                confidence_lower, confidence_upper, created_at
         {base_query}
         ORDER BY created_at DESC
@@ -121,8 +119,8 @@ async def list_assessments(
             assessment_type=AssessmentType(row["assessment_type"]),
             assessment_date=row["assessment_date"],
             status=AssessmentStatus(row["status"]),
-            primary_assessor=row["primary_assessor"],
-            secondary_assessor=row["secondary_assessor"],
+            h_r_score=float(row["h_r_score"]) if row["h_r_score"] else None,
+            synergy=float(row["synergy"]) if row["synergy"] else None,
             v_r_score=float(row["v_r_score"]) if row["v_r_score"] else None,
             confidence_lower=float(row["confidence_lower"]) if row["confidence_lower"] else None,
             confidence_upper=float(row["confidence_upper"]) if row["confidence_upper"] else None,
@@ -160,7 +158,7 @@ async def get_assessment(assessment_id: UUID):
     row = db.execute_one(
         """
         SELECT id, company_id, assessment_type, assessment_date, status,
-               primary_assessor, secondary_assessor, v_r_score, 
+               h_r_score, synergy, v_r_score,
                confidence_lower, confidence_upper, created_at
         FROM assessments WHERE id = %s
         """,
@@ -179,8 +177,8 @@ async def get_assessment(assessment_id: UUID):
         assessment_type=AssessmentType(row["assessment_type"]),
         assessment_date=row["assessment_date"],
         status=AssessmentStatus(row["status"]),
-        primary_assessor=row["primary_assessor"],
-        secondary_assessor=row["secondary_assessor"],
+        h_r_score=float(row["h_r_score"]) if row["h_r_score"] else None,
+        synergy=float(row["synergy"]) if row["synergy"] else None,
         v_r_score=float(row["v_r_score"]) if row["v_r_score"] else None,
         confidence_lower=float(row["confidence_lower"]) if row["confidence_lower"] else None,
         confidence_upper=float(row["confidence_upper"]) if row["confidence_upper"] else None,
@@ -243,13 +241,14 @@ async def update_assessment_status(assessment_id: UUID, update: AssessmentStatus
     summary="Add Dimension Scores"
 )
 async def add_dimension_scores(assessment_id: UUID, scores: DimensionScoreBulkCreate):
-    """Add dimension scores to an assessment."""
+    """Add dimension scores to a company via assessment context."""
+    import json as _json
     db = get_snowflake_service()
     cache = get_redis_cache()
-    
-    # Verify assessment exists
+
+    # Verify assessment exists and get company_id
     assessment = db.execute_one(
-        "SELECT id FROM assessments WHERE id = %s",
+        "SELECT id, company_id FROM assessments WHERE id = %s",
         (str(assessment_id),)
     )
     if not assessment:
@@ -257,48 +256,51 @@ async def add_dimension_scores(assessment_id: UUID, scores: DimensionScoreBulkCr
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Assessment {assessment_id} not found"
         )
-    
+
+    company_id = UUID(assessment["company_id"])
     created_scores = []
     now = datetime.now(timezone.utc)
-    
+
     for score in scores.scores:
         score_id = str(uuid4())
-        
-        # Check for duplicate dimension
+
+        # Check for duplicate dimension for this company
         existing = db.execute_one(
-            "SELECT id FROM dimension_scores WHERE assessment_id = %s AND dimension = %s",
-            (str(assessment_id), score.dimension.value)
+            "SELECT id FROM dimension_scores WHERE company_id = %s AND dimension = %s",
+            (str(company_id), score.dimension.value)
         )
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Score for dimension {score.dimension.value} already exists"
             )
-        
+
+        contributing = _json.dumps(score.contributing_sources) if score.contributing_sources else None
         db.execute_write(
             """
-            INSERT INTO dimension_scores 
-            (id, assessment_id, dimension, score, weight, confidence, evidence_count, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO dimension_scores
+            (id, company_id, dimension, score, total_weight, confidence, evidence_count, contributing_sources, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (score_id, str(assessment_id), score.dimension.value, score.score,
-             score.weight, score.confidence, score.evidence_count, now)
+            (score_id, str(company_id), score.dimension.value, score.score,
+             score.total_weight, score.confidence, score.evidence_count, contributing, now)
         )
-        
+
         created_scores.append(DimensionScoreResponse(
             id=UUID(score_id),
-            assessment_id=assessment_id,
+            company_id=company_id,
             dimension=score.dimension,
             score=score.score,
-            weight=score.weight,
+            total_weight=score.total_weight,
             confidence=score.confidence,
             evidence_count=score.evidence_count,
+            contributing_sources=score.contributing_sources,
             created_at=now
         ))
-    
-    # Invalidate assessment cache
-    cache.delete(CacheKeys.assessment(str(assessment_id)))
-    
+
+    # Invalidate company cache
+    cache.delete(CacheKeys.company(str(company_id)))
+
     return created_scores
 
 
@@ -308,12 +310,12 @@ async def add_dimension_scores(assessment_id: UUID, scores: DimensionScoreBulkCr
     summary="Get Dimension Scores"
 )
 async def get_dimension_scores(assessment_id: UUID):
-    """Get all dimension scores for an assessment."""
+    """Get all dimension scores for a company via assessment context."""
     db = get_snowflake_service()
-    
-    # Verify assessment exists
+
+    # Verify assessment exists and get company_id
     assessment = db.execute_one(
-        "SELECT id FROM assessments WHERE id = %s",
+        "SELECT id, company_id FROM assessments WHERE id = %s",
         (str(assessment_id),)
     )
     if not assessment:
@@ -321,26 +323,28 @@ async def get_dimension_scores(assessment_id: UUID):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Assessment {assessment_id} not found"
         )
-    
+
+    company_id = assessment["company_id"]
     rows = db.execute_query(
         """
-        SELECT id, assessment_id, dimension, score, weight, confidence, evidence_count, created_at
-        FROM dimension_scores WHERE assessment_id = %s
+        SELECT id, company_id, dimension, score, total_weight, confidence, evidence_count, contributing_sources, created_at
+        FROM dimension_scores WHERE company_id = %s
         ORDER BY dimension
         """,
-        (str(assessment_id),)
+        (str(company_id),)
     )
-    
+
     from app.models.enums import Dimension
     return [
         DimensionScoreResponse(
             id=UUID(row["id"]),
-            assessment_id=UUID(row["assessment_id"]),
+            company_id=UUID(row["company_id"]),
             dimension=Dimension(row["dimension"]),
             score=float(row["score"]),
-            weight=float(row["weight"]) if row["weight"] else None,
+            total_weight=float(row["total_weight"]) if row["total_weight"] else None,
             confidence=float(row["confidence"]),
             evidence_count=row["evidence_count"],
+            contributing_sources=row["contributing_sources"],
             created_at=row["created_at"]
         )
         for row in rows

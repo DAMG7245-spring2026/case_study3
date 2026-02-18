@@ -90,6 +90,14 @@ from app.models.evidence import (
     BackfillResponse,
 )
 
+# CS3 Models - Evidence Mapper
+from app.pipelines.evidence_mapper.evidence_mapping_table import (
+    DimensionMapping,
+    EvidenceScore,
+    DimensionScore,
+    SIGNAL_TO_DIMENSION_MAP,
+)
+
 __all__ = [
     # Common
     "HealthResponse",
@@ -157,4 +165,9 @@ __all__ = [
     "EvidenceStats",
     "BackfillRequest",
     "BackfillResponse",
+    # CS3 - Evidence Mapper
+    "DimensionMapping",
+    "EvidenceScore",
+    "DimensionScore",
+    "SIGNAL_TO_DIMENSION_MAP",
 ]

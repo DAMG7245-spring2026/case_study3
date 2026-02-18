@@ -616,6 +616,76 @@ class SnowflakeService:
         query = "SELECT * FROM companies WHERE ticker = %s AND is_deleted = FALSE"
         return self.execute_one(query, (ticker.upper(),))
 
+    # ================================================================
+    # CS3: Dimension Score Methods
+    # ================================================================
+
+    def get_signals_for_scoring(self, company_id: str) -> list[dict[str, Any]]:
+        """Aggregate external signals by category for dimension scoring."""
+        query = """
+            SELECT category,
+                   AVG(normalized_score) AS avg_score,
+                   AVG(confidence)       AS avg_confidence,
+                   COUNT(*)              AS signal_count
+            FROM external_signals
+            WHERE company_id = %s
+              AND normalized_score IS NOT NULL
+              AND confidence IS NOT NULL
+            GROUP BY category
+        """
+        return self.execute_query(query, (company_id,))
+
+    def get_sec_chunks_for_scoring(self, company_id: str) -> list[dict[str, Any]]:
+        """Get SEC document chunks for item_1, item_1a, item_7 sections by company."""
+        query = """
+            SELECT dc.content, dc.section
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.company_id = %s
+              AND dc.section IN ('item_1', 'item_1a', 'item_7')
+            ORDER BY dc.section, dc.chunk_index
+        """
+        return self.execute_query(query, (company_id,))
+
+    def upsert_dimension_score(
+        self,
+        company_id: str,
+        dimension: str,
+        score: float,
+        total_weight: float,
+        confidence: float,
+        evidence_count: int,
+        contributing_sources: list[str],
+    ) -> None:
+        """Insert or update a dimension score row for a company."""
+        sources_json = json.dumps(contributing_sources)
+        existing = self.execute_one(
+            "SELECT id FROM dimension_scores WHERE company_id = %s AND dimension = %s",
+            (company_id, dimension),
+        )
+        if existing:
+            self.execute_write(
+                """
+                UPDATE dimension_scores
+                SET score = %s, total_weight = %s, confidence = %s,
+                    evidence_count = %s, contributing_sources = PARSE_JSON(%s)
+                WHERE company_id = %s AND dimension = %s
+                """,
+                (score, total_weight, confidence, evidence_count, sources_json,
+                 company_id, dimension),
+            )
+        else:
+            self.execute_write(
+                """
+                INSERT INTO dimension_scores
+                    (id, company_id, dimension, score, total_weight,
+                     confidence, evidence_count, contributing_sources, created_at)
+                SELECT uuid_string(), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+                """,
+                (company_id, dimension, score, total_weight, confidence,
+                 evidence_count, sources_json),
+            )
+
     def get_company_by_id(self, company_id: UUID) -> Optional[dict[str, Any]]:
         """Get company by ID (returns full row including URL columns)."""
         query = """SELECT id, name, ticker, industry_id, position_factor,

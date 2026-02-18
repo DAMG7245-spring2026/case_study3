@@ -57,6 +57,10 @@ class Company(Base):
         back_populates="company",
         uselist=False
     )
+    dimension_scores: Mapped[List["DimensionScore"]] = relationship(
+        "DimensionScore",
+        back_populates="company"
+    )
 
     # Note: Snowflake doesn't support CHECK constraints
     # Validation is handled at the application layer (Pydantic models)
