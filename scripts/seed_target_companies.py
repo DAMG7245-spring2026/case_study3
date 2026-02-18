@@ -85,6 +85,7 @@ def main():
     db = get_snowflake_service()
     now = datetime.now(timezone.utc)
     inserted = 0
+    updated = 0
     skipped = 0
     for c in COMPANIES:
         ticker = c["ticker"].upper()
@@ -94,12 +95,32 @@ def main():
             skipped += 1
             continue
         existing = db.execute_one(
-            "SELECT id FROM companies WHERE ticker = %s AND is_deleted = FALSE",
+            "SELECT id, domain, careers_url, news_url, leadership_url FROM companies WHERE ticker = %s AND is_deleted = FALSE",
             (ticker,)
         )
         if existing:
-            print(f"Skip {ticker}: already exists")
-            skipped += 1
+            # Push URL data into existing company (fill empty domain/urls from seed)
+            db.execute_write(
+                """
+                UPDATE companies SET
+                    domain = COALESCE(NULLIF(TRIM(domain), ''), %s),
+                    careers_url = COALESCE(NULLIF(TRIM(careers_url), ''), %s),
+                    news_url = COALESCE(NULLIF(TRIM(news_url), ''), %s),
+                    leadership_url = COALESCE(NULLIF(TRIM(leadership_url), ''), %s),
+                    updated_at = %s
+                WHERE ticker = %s AND is_deleted = FALSE
+                """,
+                (
+                    c.get("domain") or None,
+                    c.get("careers_url") or None,
+                    c.get("news_url") or None,
+                    c.get("leadership_url") or None,
+                    now,
+                    ticker,
+                )
+            )
+            print(f"Updated {ticker}: filled domain/URLs from seed data")
+            updated += 1
             continue
         company_id = str(uuid4())
         db.execute_write(
@@ -116,7 +137,7 @@ def main():
         )
         print(f"Inserted {ticker}: {c['name']}")
         inserted += 1
-    print(f"\nDone: {inserted} inserted, {skipped} skipped.")
+    print(f"\nDone: {inserted} inserted, {updated} updated, {skipped} skipped.")
 
 
 if __name__ == "__main__":

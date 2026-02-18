@@ -4,7 +4,6 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, AsyncMock, patch
-import fakeredis
 
 
 @pytest.fixture
@@ -20,7 +19,7 @@ def mock_snowflake():
 
 @pytest.fixture
 def mock_redis():
-    """Mock Redis service using fakeredis."""
+    """Mock Redis service."""
     mock = MagicMock()
     mock.health_check = AsyncMock(return_value=(True, None))
     mock.get = MagicMock(return_value=None)

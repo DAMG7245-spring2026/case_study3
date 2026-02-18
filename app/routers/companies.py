@@ -13,11 +13,11 @@ from app.services import get_snowflake_service, get_redis_cache, CacheKeys
 
 router = APIRouter(prefix="/api/v1/companies", tags=["Companies"])
 
-_COMPANY_COLS = "id, name, ticker, industry_id, position_factor, domain, careers_url, news_url, leadership_url, created_at, updated_at"
+_COMPANY_COLS = "id, name, ticker, industry_id, position_factor, domain, careers_url, news_url, leadership_url, glassdoor_company_id, created_at, updated_at"
 
 
 def _row_to_company_response(row: dict) -> CompanyResponse:
-    """Build CompanyResponse from DB row (with URL columns)."""
+    """Build CompanyResponse from DB row (with URL columns and glassdoor_company_id)."""
     return CompanyResponse(
         id=UUID(row["id"]),
         name=row["name"],
@@ -28,6 +28,7 @@ def _row_to_company_response(row: dict) -> CompanyResponse:
         careers_url=row.get("careers_url"),
         news_url=row.get("news_url"),
         leadership_url=row.get("leadership_url"),
+        glassdoor_company_id=row.get("glassdoor_company_id"),
         created_at=row["created_at"],
         updated_at=row["updated_at"]
     )
@@ -77,20 +78,21 @@ async def create_company(company: CompanyCreate):
     db.execute_write(
         """
         INSERT INTO companies (id, name, ticker, industry_id, position_factor,
-            domain, careers_url, news_url, leadership_url, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            domain, careers_url, news_url, leadership_url, glassdoor_company_id, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             company_id, company.name, ticker_norm, str(company.industry_id),
             company.position_factor,
             company.domain or None, company.careers_url or None,
             company.news_url or None, company.leadership_url or None,
+            company.glassdoor_company_id or None,
             now, now
         )
     )
 
     row = db.execute_one(
-        "SELECT id, name, ticker, industry_id, position_factor, domain, careers_url, news_url, leadership_url, created_at, updated_at FROM companies WHERE id = %s",
+        f"SELECT {_COMPANY_COLS} FROM companies WHERE id = %s",
         (company_id,)
     )
     return _row_to_company_response(row)
@@ -199,7 +201,7 @@ async def update_company(company_id: UUID, update: CompanyUpdate):
         )
     
     # Build update query dynamically (only allowed columns)
-    allowed = {"name", "ticker", "industry_id", "position_factor", "domain", "careers_url", "news_url", "leadership_url"}
+    allowed = {"name", "ticker", "industry_id", "position_factor", "domain", "careers_url", "news_url", "leadership_url", "glassdoor_company_id"}
     updates = []
     params = []
     update_data = update.model_dump(exclude_unset=True)
