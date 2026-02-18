@@ -37,6 +37,21 @@ elif run_scope == "All companies" and not company_options:
     st.caption("Add at least one company (Companies page) to run the pipeline for all.")
 else:
     with st.form("run_documents_pipeline"):
+        company_labels = [x[0] for x in company_options]
+        company_ids = [x[1] for x in company_options]
+        sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
+        COMMON_FILING_TYPES = ["10-K", "10-Q", "8-K", "DEF 14A"]
+        selected_filings = st.multiselect(
+            "Filing types",
+            options=COMMON_FILING_TYPES,
+            default=["10-K", "10-Q", "8-K"],
+            key="filing_types_multi",
+        )
+        custom_input = st.text_input(
+            "Other filing types (comma-separated, e.g. S-1, 20-F)",
+            value="",
+            key="filing_types_custom",
+        )
         if run_scope == "One company":
             company_labels = [x[0] for x in company_options]
             company_ids = [x[1] for x in company_options]
@@ -46,18 +61,12 @@ else:
         filing_10q = st.checkbox("10-Q", value=True, key="ft_10q")
         filing_8k = st.checkbox("8-K", value=True, key="ft_8k")
         filing_def14a = st.checkbox("DEF-14A", value=False, key="ft_def14a")
+
         years_back = st.number_input("Years back", min_value=1, max_value=10, value=3, key="years_back_run")
         run_clicked = st.form_submit_button("Run documents pipeline")
     if run_clicked:
-        selected_filings = []
-        if filing_10k:
-            selected_filings.append("10-K")
-        if filing_10q:
-            selected_filings.append("10-Q")
-        if filing_8k:
-            selected_filings.append("8-K")
-        if filing_def14a:
-            selected_filings.append("DEF-14A")
+        extra = [t.strip().upper() for t in custom_input.split(",") if t.strip()]
+        selected_filings = list(dict.fromkeys(selected_filings + extra))
         if not selected_filings:
             st.error("Select at least one filing type.")
         else:

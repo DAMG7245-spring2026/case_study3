@@ -459,17 +459,20 @@ def post_backfill(
     include_documents: bool = True,
     include_signals: bool = True,
     years_back: int = 3,
+    filing_types: Optional[list[str]] = None,
     client: Optional[httpx.Client] = None,
 ) -> dict[str, Any]:
     """POST /api/v1/evidence/backfill."""
     c = client or get_client()
-    body = {
+    body: dict[str, Any] = {
         "include_documents": include_documents,
         "include_signals": include_signals,
         "years_back": years_back,
     }
     if tickers is not None:
         body["tickers"] = tickers
+    if filing_types is not None:
+        body["filing_types"] = filing_types
     try:
         r = c.post("/api/v1/evidence/backfill", json=body)
         r.raise_for_status()

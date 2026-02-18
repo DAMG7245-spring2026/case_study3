@@ -72,13 +72,23 @@ async def backfill_evidence(
 
     if request.tickers:
         tickers = []
+        unknown = []
         for t in request.tickers:
             tnorm = (t or "").strip().upper()
             if not tnorm:
                 continue
-            company = db.get_company_by_ticker(tnorm)
-            if company:
+            if db.get_company_by_ticker(tnorm):
                 tickers.append(tnorm)
+            else:
+                unknown.append(tnorm)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Unknown tickers (not in DB): {', '.join(unknown)}. "
+                    "Add them via the Companies page first."
+                ),
+            )
     else:
         rows = db.execute_query(
             "SELECT ticker FROM companies WHERE is_deleted = FALSE AND ticker IS NOT NULL"
@@ -88,7 +98,7 @@ async def backfill_evidence(
     if not tickers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid companies to process. Add companies first or select existing tickers."
+            detail="No companies found in DB. Add companies first.",
         )
 
     background_tasks.add_task(
@@ -98,6 +108,7 @@ async def backfill_evidence(
         include_documents=request.include_documents,
         include_signals=request.include_signals,
         years_back=request.years_back,
+        filing_types=request.filing_types,
         db=db,
         s3=s3
     )
@@ -167,6 +178,7 @@ def _run_backfill(
     include_documents: bool,
     include_signals: bool,
     years_back: int,
+    filing_types: list[str],
     db: SnowflakeService,
     s3: S3Storage
 ):
@@ -219,7 +231,7 @@ def _run_backfill(
                     
                     filings = pipeline.download_filings(
                         ticker=ticker,
-                        filing_types=["10-K", "10-Q", "8-K"],
+                        filing_types=filing_types,
                         limit=5,
                         after=f"{datetime.now().year - years_back}-01-01"
                     )

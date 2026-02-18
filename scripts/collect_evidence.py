@@ -89,18 +89,25 @@ class EvidenceCollector:
             return None
         return UUID(company["id"])
 
-    def collect_documents(self, ticker: str, company_id: UUID, years_back: int = 3) -> int:
+    def collect_documents(
+        self,
+        ticker: str,
+        company_id: UUID,
+        years_back: int = 3,
+        filing_types: list[str] | None = None,
+    ) -> int:
         """Collect SEC documents for a company."""
         logger.info(f"📄 Collecting documents for {ticker}")
-        
+
         docs_processed = 0
-        
+        effective_types = filing_types or ["10-K", "10-Q", "8-K"]
+
         try:
             # Download filings
             after_date = f"{datetime.now().year - years_back}-01-01"
             filings = self.sec_pipeline.download_filings(
                 ticker=ticker,
-                filing_types=["10-K", "10-Q", "8-K"],
+                filing_types=effective_types,
                 limit=10,
                 after=after_date
             )
@@ -375,7 +382,8 @@ class EvidenceCollector:
         ticker: str,
         include_documents: bool = True,
         include_signals: bool = True,
-        years_back: int = 3
+        years_back: int = 3,
+        filing_types: list[str] | None = None,
     ) -> dict:
         """Collect all evidence for a single company. Company must exist in DB."""
         company = self.db.get_company_by_ticker(ticker)
@@ -401,7 +409,7 @@ class EvidenceCollector:
             logger.info(f"   Company ID: {company_id}")
             
             if include_documents:
-                result["documents_collected"] = self.collect_documents(ticker, company_id, years_back)
+                result["documents_collected"] = self.collect_documents(ticker, company_id, years_back, filing_types=filing_types)
             
             if include_signals:
                 result["signals_collected"] = self.collect_signals(ticker, company_id)
@@ -419,7 +427,8 @@ class EvidenceCollector:
         tickers: list[str],
         include_documents: bool = True,
         include_signals: bool = True,
-        years_back: int = 3
+        years_back: int = 3,
+        filing_types: list[str] | None = None,
     ) -> dict:
         """Collect evidence for multiple companies."""
         results = {}
@@ -429,7 +438,8 @@ class EvidenceCollector:
                 ticker,
                 include_documents=include_documents,
                 include_signals=include_signals,
-                years_back=years_back
+                years_back=years_back,
+                filing_types=filing_types,
             )
             if result:
                 results[ticker] = result
@@ -494,7 +504,12 @@ Examples:
         default="data/raw/sec",
         help="Directory for downloaded files"
     )
-    
+    parser.add_argument(
+        "--filing-types",
+        default="10-K,10-Q,8-K",
+        help="Comma-separated SEC filing types (default: 10-K,10-Q,8-K)",
+    )
+
     args = parser.parse_args()
     
     # Determine companies to process (from DB)
@@ -521,24 +536,27 @@ Examples:
     # Determine what to collect
     include_documents = not args.signals_only
     include_signals = not args.documents_only
-    
+    filing_types = [f.strip() for f in args.filing_types.split(",") if f.strip()]
+
     logger.info(f"\n🚀 Starting evidence collection")
-    logger.info(f"   Companies: {', '.join(tickers)}")
-    logger.info(f"   Documents: {'Yes' if include_documents else 'No'}")
-    logger.info(f"   Signals:   {'Yes' if include_signals else 'No'}")
-    logger.info(f"   Years:     {args.years_back}")
-    
+    logger.info(f"   Companies:    {', '.join(tickers)}")
+    logger.info(f"   Documents:    {'Yes' if include_documents else 'No'}")
+    logger.info(f"   Signals:      {'Yes' if include_signals else 'No'}")
+    logger.info(f"   Years:        {args.years_back}")
+    logger.info(f"   Filing types: {', '.join(filing_types)}")
+
     # Run collection
     collector = EvidenceCollector(
         email=args.email,
         download_dir=Path(args.output_dir)
     )
-    
+
     results = collector.collect_all(
         tickers=tickers,
         include_documents=include_documents,
         include_signals=include_signals,
-        years_back=args.years_back
+        years_back=args.years_back,
+        filing_types=filing_types,
     )
     
     # Print summary
