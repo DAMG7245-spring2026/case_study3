@@ -319,6 +319,47 @@ class SnowflakeService:
         result = self.execute_one(query, (document_id,))
         return result["count"] if result else 0
 
+    def get_document_text_by_filing(
+        self,
+        company_id: UUID,
+        filing_type: str,
+        section: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Get full text for a company's latest document of given filing type (from chunks).
+        Returns None if no document or no chunks. Optional section filter (e.g. 'item_1' for 10-K).
+        """
+        docs = self.get_documents(
+            company_id=company_id,
+            filing_type=filing_type,
+            limit=1,
+        )
+        if not docs:
+            return None
+        doc_id = docs[0].get("id")
+        if not doc_id:
+            return None
+        chunk_size = 1000
+        offset = 0
+        parts: list[str] = []
+        while True:
+            chunks = self.get_chunks(
+                document_id=doc_id,
+                section=section,
+                limit=chunk_size,
+                offset=offset,
+            )
+            if not chunks:
+                break
+            for c in chunks:
+                content = c.get("content")
+                if content:
+                    parts.append(content)
+            if len(chunks) < chunk_size:
+                break
+            offset += chunk_size
+        return " ".join(parts) if parts else None
+
     # ================================================================
     # CS2: External Signals Methods
     # ================================================================
@@ -687,9 +728,9 @@ class SnowflakeService:
             )
 
     def get_company_by_id(self, company_id: UUID) -> Optional[dict[str, Any]]:
-        """Get company by ID (returns full row including URL columns)."""
+        """Get company by ID (returns full row including URL columns and glassdoor_company_id)."""
         query = """SELECT id, name, ticker, industry_id, position_factor,
-            domain, careers_url, news_url, leadership_url, created_at, updated_at
+            domain, careers_url, news_url, leadership_url, glassdoor_company_id, created_at, updated_at
             FROM companies WHERE id = %s AND is_deleted = FALSE"""
         return self.execute_one(query, (str(company_id),))
 

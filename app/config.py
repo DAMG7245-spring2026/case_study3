@@ -55,6 +55,11 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("SCRAPFLY_API_KEY", "SCRAPFLY_KEY"),
     )
+    # Optional: RapidAPI key for Glassdoor (real-time-glassdoor-data); preferred when set for 30–40 reviews/company
+    rapidapi_glassdoor_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("RAPIDAPI_GLASSDOOR_KEY", "RAPIDAPI_GLASSDOOR_API_KEY"),
+    )
 
 
 @lru_cache

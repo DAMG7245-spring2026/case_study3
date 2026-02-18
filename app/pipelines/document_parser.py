@@ -172,8 +172,12 @@ class DocumentParser:
 
         # Try to find filing type from path
         # Path structure: .../ticker/filing_type/accession/file
+        # Library writes DEF-14A as DEFA14A (no hyphen) in path
         filing_type = "UNKNOWN"
         for part in parts:
+            if part == "DEFA14A":
+                filing_type = "DEF-14A"
+                break
             if part in ["10-K", "10-Q", "8-K", "DEF-14A"]:
                 filing_type = part
                 break

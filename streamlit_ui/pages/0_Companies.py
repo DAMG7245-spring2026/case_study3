@@ -161,6 +161,11 @@ if st.session_state.get("show_add_company_modal") and hasattr(st, "dialog"):
             careers_url = st.text_input("Careers URL (optional)", placeholder="https://careers.acme.com")
             news_url = st.text_input("News URL (optional)", placeholder="https://acme.com/news")
             leadership_url = st.text_input("Leadership URL (optional)", placeholder="https://acme.com/leadership")
+            glassdoor_company_id = st.text_input(
+                "Glassdoor company ID (optional)",
+                placeholder="e.g. 9079 from ...-Reviews-E9079.htm",
+                help="Glassdoor employer ID for review collection when RapidAPI search fails.",
+            )
             col1, col2, _ = st.columns(3)
             with col1:
                 submitted = st.form_submit_button("Add company")
@@ -189,6 +194,7 @@ if st.session_state.get("show_add_company_modal") and hasattr(st, "dialog"):
                             careers_url=careers_url or None,
                             news_url=news_url or None,
                             leadership_url=leadership_url or None,
+                            glassdoor_company_id=glassdoor_company_id.strip() or None,
                         )
                         st.success(f"Company {ticker_norm} added.")
                         _clear_add_modal()
@@ -237,6 +243,13 @@ if edit_id and hasattr(st, "dialog"):
                 upd_careers_url = st.text_input("Careers URL", value=company.get("careers_url") or "", key="upd_careers_modal")
                 upd_news_url = st.text_input("News URL", value=company.get("news_url") or "", key="upd_news_modal")
                 upd_leadership_url = st.text_input("Leadership URL", value=company.get("leadership_url") or "", key="upd_leadership_modal")
+                upd_glassdoor_company_id = st.text_input(
+                    "Glassdoor company ID",
+                    value=company.get("glassdoor_company_id") or "",
+                    placeholder="e.g. 9079 from ...-Reviews-E9079.htm",
+                    key="upd_glassdoor_modal",
+                    help="Glassdoor employer ID for review collection when RapidAPI search fails.",
+                )
                 col1, col2, _ = st.columns(3)
                 with col1:
                     save_clicked = st.form_submit_button("Save changes")
@@ -259,6 +272,7 @@ if edit_id and hasattr(st, "dialog"):
                             careers_url=upd_careers_url or None,
                             news_url=upd_news_url or None,
                             leadership_url=upd_leadership_url or None,
+                            glassdoor_company_id=upd_glassdoor_company_id.strip() or None,
                         )
                         st.success("Company updated.")
                         _clear_edit_modal()

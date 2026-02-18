@@ -89,6 +89,7 @@ def create_company(
     careers_url: Optional[str] = None,
     news_url: Optional[str] = None,
     leadership_url: Optional[str] = None,
+    glassdoor_company_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """POST /api/v1/companies. Returns created company. Raises on 409 (duplicate ticker)."""
     c = client or get_client()
@@ -106,6 +107,8 @@ def create_company(
         body["news_url"] = news_url
     if leadership_url is not None:
         body["leadership_url"] = leadership_url
+    if glassdoor_company_id is not None:
+        body["glassdoor_company_id"] = glassdoor_company_id
     try:
         r = c.post("/api/v1/companies", json=body)
         r.raise_for_status()
@@ -126,6 +129,7 @@ def update_company(
     careers_url: Optional[str] = None,
     news_url: Optional[str] = None,
     leadership_url: Optional[str] = None,
+    glassdoor_company_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """PUT /api/v1/companies/{company_id}. Only include fields to update."""
     c = client or get_client()
@@ -146,6 +150,8 @@ def update_company(
         body["news_url"] = news_url
     if leadership_url is not None:
         body["leadership_url"] = leadership_url
+    if glassdoor_company_id is not None:
+        body["glassdoor_company_id"] = glassdoor_company_id
     try:
         r = c.put(f"/api/v1/companies/{company_id}", json=body)
         r.raise_for_status()
@@ -266,6 +272,26 @@ def collect_documents(
             c.close()
 
 
+def collect_documents_all(
+    filing_types: list[str],
+    years_back: int = 3,
+    client: Optional[httpx.Client] = None,
+) -> dict[str, Any]:
+    """POST /api/v1/documents/collect-all. Triggers document collection for all companies. Returns task_id, status, message."""
+    c = client or get_client()
+    body: dict[str, Any] = {
+        "filing_types": filing_types,
+        "years_back": years_back,
+    }
+    try:
+        r = c.post("/api/v1/documents/collect-all", json=body)
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()
+
+
 def get_document_collection_logs(
     task_id: str,
     client: Optional[httpx.Client] = None,
@@ -306,6 +332,22 @@ def collect_signals(
     }
     try:
         r = c.post("/api/v1/signals/collect", json=body)
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()
+
+
+def collect_signals_all(
+    categories: list[str],
+    client: Optional[httpx.Client] = None,
+) -> dict[str, Any]:
+    """POST /api/v1/signals/collect-all. Triggers signal collection for all companies. Returns task_id, status, message."""
+    c = client or get_client()
+    body: dict[str, Any] = {"categories": categories}
+    try:
+        r = c.post("/api/v1/signals/collect-all", json=body)
         r.raise_for_status()
         return r.json()
     finally:

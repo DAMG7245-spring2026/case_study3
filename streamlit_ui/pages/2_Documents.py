@@ -5,6 +5,7 @@ from streamlit_ui.components.api_client import (
     get_client,
     get_companies,
     collect_documents,
+    collect_documents_all,
     get_document_collection_logs,
 )
 from streamlit_ui.utils.config import get_api_url
@@ -23,13 +24,23 @@ companies_items = companies_data.get("items") or []
 company_options = [(f"{c.get('ticker', '')} — {c.get('name', '')}", str(c["id"])) for c in companies_items if c.get("id") and c.get("ticker")]
 FILING_TYPES = ["10-K", "10-Q", "8-K", "DEF-14A"]
 
-if not company_options:
+run_scope = st.radio(
+    "Run for",
+    options=["One company", "All companies"],
+    index=0,
+    key="doc_run_scope",
+    horizontal=True,
+)
+if not company_options and run_scope == "One company":
     st.caption("Add at least one company (Companies page) to run the pipeline.")
+elif run_scope == "All companies" and not company_options:
+    st.caption("Add at least one company (Companies page) to run the pipeline for all.")
 else:
     with st.form("run_documents_pipeline"):
-        company_labels = [x[0] for x in company_options]
-        company_ids = [x[1] for x in company_options]
-        sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
+        if run_scope == "One company":
+            company_labels = [x[0] for x in company_options]
+            company_ids = [x[1] for x in company_options]
+            sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
         st.caption("Select which filing types to collect:")
         filing_10k = st.checkbox("10-K", value=True, key="ft_10k")
         filing_10q = st.checkbox("10-Q", value=True, key="ft_10q")
@@ -50,12 +61,15 @@ else:
         if not selected_filings:
             st.error("Select at least one filing type.")
         else:
-            company_id = company_ids[sel_idx]
             try:
-                resp = collect_documents(company_id, selected_filings, years_back=years_back, client=client)
+                if run_scope == "All companies":
+                    resp = collect_documents_all(selected_filings, years_back=years_back, client=client)
+                else:
+                    company_id = company_ids[sel_idx]
+                    resp = collect_documents(company_id, selected_filings, years_back=years_back, client=client)
                 task_id = resp.get("task_id", "")
                 st.session_state["documents_task_id"] = task_id
-                st.success("Collection started. Server logs will appear below (scrollable).")
+                st.success(resp.get("message", "Collection started. Server logs will appear below (scrollable)."))
             except Exception as e:
                 st.error(f"Failed to start collection: {e}")
 
