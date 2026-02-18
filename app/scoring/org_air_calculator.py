@@ -5,7 +5,10 @@ Full formula
   Org-AI-R = (1 − β) × [α × V^R + (1 − α) × H^R] + β × Synergy
 
   α = 0.60   (idiosyncratic / V^R weight)
-  β = 0.12   (synergy weight)
+  β = # The value `0.12` in the Org-AI-R Calculator represents the weight assigned to the Synergy
+  # component in the final scoring formula. This weight determines the relative importance of the
+  # Synergy score compared to the V^R and H^R scores in calculating the overall Org-AI-R score.
+  0.12   (synergy weight)
 
 The calculator:
   1. Accepts V^R, H^R, and Synergy results
@@ -13,6 +16,7 @@ The calculator:
   3. Attaches an SEM-based confidence interval
   4. Logs a full audit trail via structlog
 """
+
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,46 +33,46 @@ from app.scoring.vr_calculator import VRResult
 
 logger = structlog.get_logger(__name__)
 
-ALPHA: Decimal = Decimal("0.60")   # V^R weight
-BETA:  Decimal = Decimal("0.12")   # Synergy weight
-PARAM_VERSION = "3.0.0"           # δ=0.15, λ=0.25 corrected
+ALPHA: Decimal = Decimal("0.60")  # V^R weight
+BETA: Decimal = Decimal("0.12")  # Synergy weight
+PARAM_VERSION = "3.0.0"  # δ=0.15, λ=0.25 corrected
 
 
 @dataclass
 class OrgAIRResult:
     """Complete Org-AI-R scoring result."""
 
-    score_id:         str
-    company_id:       str
-    sector:           str
-    timestamp:        datetime
-    final_score:      Decimal
-    vr_result:        VRResult
-    hr_result:        HRResult
-    synergy_result:   SynergyResult
+    score_id: str
+    company_id: str
+    sector: str
+    timestamp: datetime
+    final_score: Decimal
+    vr_result: VRResult
+    hr_result: HRResult
+    synergy_result: SynergyResult
     confidence_interval: ConfidenceInterval
-    alpha:            Decimal
-    beta:             Decimal
+    alpha: Decimal
+    beta: Decimal
     parameter_version: str
 
     def to_dict(self) -> dict:
         return {
-            "score_id":        self.score_id,
-            "company_id":      self.company_id,
-            "sector":          self.sector,
-            "timestamp":       self.timestamp.isoformat(),
-            "final_score":     float(self.final_score),
-            "vr_score":        float(self.vr_result.vr_score),
-            "hr_score":        float(self.hr_result.hr_score),
-            "synergy_score":   float(self.synergy_result.synergy_score),
-            "ci_lower":        float(self.confidence_interval.ci_lower),
-            "ci_upper":        float(self.confidence_interval.ci_upper),
-            "ci_width":        float(self.confidence_interval.ci_width),
-            "sem":             float(self.confidence_interval.sem),
-            "reliability":     float(self.confidence_interval.reliability),
-            "evidence_count":  self.confidence_interval.evidence_count,
-            "alpha":           float(self.alpha),
-            "beta":            float(self.beta),
+            "score_id": self.score_id,
+            "company_id": self.company_id,
+            "sector": self.sector,
+            "timestamp": self.timestamp.isoformat(),
+            "final_score": float(self.final_score),
+            "vr_score": float(self.vr_result.vr_score),
+            "hr_score": float(self.hr_result.hr_score),
+            "synergy_score": float(self.synergy_result.synergy_score),
+            "ci_lower": float(self.confidence_interval.ci_lower),
+            "ci_upper": float(self.confidence_interval.ci_upper),
+            "ci_width": float(self.confidence_interval.ci_width),
+            "sem": float(self.confidence_interval.sem),
+            "reliability": float(self.confidence_interval.reliability),
+            "evidence_count": self.confidence_interval.evidence_count,
+            "alpha": float(self.alpha),
+            "beta": float(self.beta),
             "parameter_version": self.parameter_version,
         }
 
@@ -89,21 +93,24 @@ class OrgAIRCalculator:
     def __init__(
         self,
         alpha: float = float(ALPHA),
-        beta:  float = float(BETA),
+        beta: float = float(BETA),
         confidence_calculator: Optional[ConfidenceCalculator] = None,
     ) -> None:
         self.alpha = to_decimal(alpha)
-        self.beta  = to_decimal(beta)
+        self.beta = to_decimal(beta)
         self.ci_calc = confidence_calculator or ConfidenceCalculator()
-        logger.info("org_air_calculator_initialized",
-                    alpha=float(self.alpha), beta=float(self.beta))
+        logger.info(
+            "org_air_calculator_initialized",
+            alpha=float(self.alpha),
+            beta=float(self.beta),
+        )
 
     def calculate(
         self,
-        company_id:     str,
-        sector:         str,
-        vr_result:      VRResult,
-        hr_result:      HRResult,
+        company_id: str,
+        sector: str,
+        vr_result: VRResult,
+        hr_result: HRResult,
         synergy_result: SynergyResult,
         evidence_count: int = 10,
         confidence_level: float = 0.95,
@@ -122,7 +129,7 @@ class OrgAIRCalculator:
         Returns:
             OrgAIRResult with final score, sub-scores, CI, and audit trail.
         """
-        score_id  = str(uuid.uuid4())
+        score_id = str(uuid.uuid4())
         timestamp = datetime.now(timezone.utc)
 
         one_minus_beta = Decimal("1") - self.beta
@@ -130,7 +137,9 @@ class OrgAIRCalculator:
             self.alpha * vr_result.vr_score
             + (Decimal("1") - self.alpha) * hr_result.hr_score
         )
-        final_score = clamp(one_minus_beta * weighted + self.beta * synergy_result.synergy_score)
+        final_score = clamp(
+            one_minus_beta * weighted + self.beta * synergy_result.synergy_score
+        )
 
         ci = self.ci_calc.calculate(
             score=final_score,

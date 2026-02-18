@@ -1,46 +1,14 @@
-"""Dimension score endpoints + full Org-AI-R scoring pipeline endpoints."""
+"""Dimension score endpoints + Org-AI-R scoring endpoints."""
 import json
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from app.models import DimensionScoreUpdate, DimensionScoreResponse
 from app.models.enums import Dimension
 from app.pipelines.dimension_scorer import DimensionScoringPipeline
-from app.scoring.confidence import ConfidenceCalculator
-from app.scoring.hr_calculator import HRCalculator
-from app.scoring.org_air_calculator import OrgAIRCalculator
-from app.scoring.position_factor import PositionFactorCalculator
-from app.scoring.synergy_calculator import SynergyCalculator
-from app.scoring.talent_concentration import TalentConcentrationCalculator
-from app.scoring.vr_calculator import VRCalculator
+from app.pipelines.org_air_pipeline import OrgAIRPipeline, OrgAIRScores
 from app.services import get_snowflake_service, get_redis_cache, CacheKeys
-
-# ── sector / market-cap helpers (same as scripts/compute_scores.py) ───────────
-_SECTOR_MAP: dict[str, str] = {
-    "Technology":  "technology",
-    "Financial":   "financial_services",
-    "Healthcare":  "healthcare",
-    "Services":    "business_services",
-    "Industrials": "manufacturing",
-    "Consumer":    "retail",
-    "Energy":      "business_services",
-    "Real Estate": "business_services",
-}
-_MARKET_CAP_PCT: dict[str, float] = {
-    "JPM": 0.90, "GS": 0.60, "WMT": 0.90, "TGT": 0.55,
-    "UNH": 0.95, "HCA": 0.50, "CAT": 0.70, "DE":  0.65,
-    "ADP": 0.80, "PAYX": 0.45,
-}
-_TIMING_FACTOR = 1.05
-
-
-def _alignment(dim_scores: dict[str, float]) -> float:
-    leadership = dim_scores.get("leadership_vision", 50.0)
-    governance  = dim_scores.get("ai_governance",   50.0)
-    raw = (0.6 * leadership + 0.4 * governance) / 100.0
-    return max(0.5, min(0.95, raw))
-
 
 # ── response schema ───────────────────────────────────────────────────────────
 
@@ -61,6 +29,26 @@ class OrgAIRResponse(BaseModel):
     evidence_count:       int
     dimension_scores:     dict[str, float]
 
+
+def _to_response(scores: OrgAIRScores) -> OrgAIRResponse:
+    return OrgAIRResponse(
+        company_id=UUID(scores.company_id),
+        ticker=scores.ticker,
+        company_name=scores.company_name,
+        sector=scores.sector,
+        vr_score=scores.vr_score,
+        hr_score=scores.hr_score,
+        synergy_score=scores.synergy_score,
+        org_air_score=scores.org_air_score,
+        confidence_lower=scores.confidence_lower,
+        confidence_upper=scores.confidence_upper,
+        talent_concentration=scores.talent_concentration,
+        position_factor=scores.position_factor,
+        evidence_count=scores.evidence_count,
+        dimension_scores=scores.dimension_scores,
+    )
+
+
 router = APIRouter(prefix="/api/v1/scores", tags=["Dimension Scores"])
 
 
@@ -73,7 +61,7 @@ async def update_dimension_score(score_id: UUID, update: DimensionScoreUpdate):
     """Update a dimension score."""
     db = get_snowflake_service()
     cache = get_redis_cache()
-    
+
     # Get existing score
     row = db.execute_one(
         """
@@ -82,39 +70,39 @@ async def update_dimension_score(score_id: UUID, update: DimensionScoreUpdate):
         """,
         (str(score_id),)
     )
-    
+
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Dimension score {score_id} not found"
         )
-    
+
     # Build update query
     updates = []
     params = []
     update_data = update.model_dump(exclude_unset=True)
-    
+
     for field, value in update_data.items():
         if value is not None:
             updates.append(f"{field} = %s")
             params.append(value)
-    
+
     if not updates:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fields to update"
         )
-    
+
     params.append(str(score_id))
-    
+
     db.execute_write(
         f"UPDATE dimension_scores SET {', '.join(updates)} WHERE id = %s",
         tuple(params)
     )
-    
+
     # Invalidate company cache
     cache.delete(CacheKeys.company(row["company_id"]))
-    
+
     # Fetch and return updated score
     updated_row = db.execute_one(
         """
@@ -206,99 +194,6 @@ async def compute_dimension_scores(company_id: UUID):
     ]
 
 
-# ── shared calculators (module-level singletons) ──────────────────────────────
-_tc_calc   = TalentConcentrationCalculator()
-_vr_calc   = VRCalculator()
-_pf_calc   = PositionFactorCalculator()
-_hr_calc   = HRCalculator()
-_syn_calc  = SynergyCalculator()
-_ci_calc   = ConfidenceCalculator()
-_org_calc  = OrgAIRCalculator(confidence_calculator=_ci_calc)
-
-
-def _run_org_air_for_company(company_id: str, db) -> OrgAIRResponse:
-    """Core scoring logic shared by compute and GET endpoints."""
-    # Company + industry info
-    co = db.execute_one(
-        "SELECT id, name, ticker, industry_id FROM companies WHERE id = %s AND is_deleted = FALSE",
-        (company_id,),
-    )
-    if not co:
-        raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
-
-    industries = {
-        r["id"]: r
-        for r in db.execute_query("SELECT id, name, sector, h_r_base FROM industries")
-    }
-    industry_row = industries.get(co["industry_id"], {})
-    db_sector   = industry_row.get("sector", "Services")
-    pf_sector   = _SECTOR_MAP.get(db_sector, "business_services")
-    h_r_base    = float(industry_row.get("h_r_base", 65.0))
-    ticker      = co["ticker"]
-    mcap_pct    = _MARKET_CAP_PCT.get(ticker, 0.5)
-
-    # Dimension scores (already computed)
-    dim_scores    = db.get_dimension_scores(company_id)
-    evidence_count = max(1, db.get_evidence_count(company_id))
-
-    # TC from raw job postings
-    job_postings = db.get_job_raw_payload(company_id)
-    job_analysis = _tc_calc.analyze_job_postings(job_postings)
-    tc           = _tc_calc.calculate_tc(job_analysis)
-
-    # V^R
-    vr_result = _vr_calc.calculate(dim_scores, float(tc))
-
-    # Position Factor
-    pf = _pf_calc.calculate_position_factor(
-        vr_score=float(vr_result.vr_score),
-        sector=pf_sector,
-        market_cap_percentile=mcap_pct,
-    )
-
-    # H^R
-    hr_result = _hr_calc.calculate(
-        sector=pf_sector,
-        position_factor=float(pf),
-        baseline_override=h_r_base,
-    )
-
-    # Synergy
-    syn_result = _syn_calc.calculate(
-        vr_score=vr_result.vr_score,
-        hr_score=hr_result.hr_score,
-        alignment=_alignment(dim_scores),
-        timing_factor=_TIMING_FACTOR,
-    )
-
-    # Org-AI-R
-    org_result = _org_calc.calculate(
-        company_id=company_id,
-        sector=pf_sector,
-        vr_result=vr_result,
-        hr_result=hr_result,
-        synergy_result=syn_result,
-        evidence_count=evidence_count,
-    )
-
-    return OrgAIRResponse(
-        company_id=UUID(company_id),
-        ticker=ticker,
-        company_name=co["name"],
-        sector=pf_sector,
-        vr_score=round(float(vr_result.vr_score), 2),
-        hr_score=round(float(hr_result.hr_score), 2),
-        synergy_score=round(float(syn_result.synergy_score), 2),
-        org_air_score=round(float(org_result.final_score), 2),
-        confidence_lower=round(float(org_result.confidence_interval.ci_lower), 2),
-        confidence_upper=round(float(org_result.confidence_interval.ci_upper), 2),
-        talent_concentration=round(float(tc), 4),
-        position_factor=round(float(pf), 4),
-        evidence_count=evidence_count,
-        dimension_scores={k: round(v, 2) for k, v in dim_scores.items()},
-    ), org_result, float(pf), float(tc)
-
-
 @router.post(
     "/companies/{company_id}/compute-org-air",
     response_model=OrgAIRResponse,
@@ -321,32 +216,35 @@ async def compute_org_air(company_id: UUID):
     cid   = str(company_id)
 
     # Step 1 – recompute dimension scores
-    pipeline = DimensionScoringPipeline(db)
+    dim_pipeline = DimensionScoringPipeline(db)
     try:
-        pipeline.compute_and_store(cid)
+        dim_pipeline.compute_and_store(cid)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Dimension scoring failed: {exc}")
 
     # Steps 2-8
-    response, org_result, pf, tc = _run_org_air_for_company(cid, db)
+    try:
+        scores = OrgAIRPipeline().run(cid, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
     # Step 9 – persist
     db.upsert_assessment(
         company_id=cid,
-        v_r_score=response.vr_score,
-        h_r_score=response.hr_score,
-        synergy=response.synergy_score,
-        org_air_score=response.org_air_score,
-        confidence_lower=response.confidence_lower,
-        confidence_upper=response.confidence_upper,
-        position_factor=pf,
-        talent_concentration=tc,
+        v_r_score=scores.vr_score,
+        h_r_score=scores.hr_score,
+        synergy=scores.synergy_score,
+        org_air_score=scores.org_air_score,
+        confidence_lower=scores.confidence_lower,
+        confidence_upper=scores.confidence_upper,
+        position_factor=scores.position_factor,
+        talent_concentration=scores.talent_concentration,
     )
 
     # Invalidate caches
     cache.delete(CacheKeys.company(cid))
 
-    return response
+    return _to_response(scores)
 
 
 @router.get(
@@ -364,8 +262,11 @@ async def get_org_air(company_id: UUID):
     """
     db  = get_snowflake_service()
     cid = str(company_id)
-    response, _, _, _ = _run_org_air_for_company(cid, db)
-    return response
+    try:
+        scores = OrgAIRPipeline().run(cid, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _to_response(scores)
 
 
 @router.get(
@@ -388,11 +289,12 @@ async def list_org_air(ticker: Optional[str] = None):
         wanted = {t.strip().upper() for t in ticker.split(",")}
         companies = [c for c in companies if c["ticker"] in wanted]
 
+    pipeline = OrgAIRPipeline()
     results = []
     for co in companies:
         try:
-            resp, _, _, _ = _run_org_air_for_company(str(co["id"]), db)
-            results.append(resp)
+            scores = pipeline.run(str(co["id"]), db)
+            results.append(_to_response(scores))
         except Exception:
             continue  # skip companies with insufficient data
 

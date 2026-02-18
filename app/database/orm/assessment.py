@@ -21,12 +21,11 @@ class Assessment(Base):
 
     # Fields
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
-    assessment_type: Mapped[str] = mapped_column(String(20))
     assessment_date: Mapped[date] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(20), default="draft")
     h_r_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
     synergy: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
     v_r_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    org_ai_r: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
     confidence_lower: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     confidence_upper: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -44,4 +43,4 @@ class Assessment(Base):
     # Validation is handled at the application layer (Pydantic models)
 
     def __repr__(self):
-        return f"<Assessment(id={self.id}, company_id={self.company_id}, type={self.assessment_type})>"
+        return f"<Assessment(id={self.id}, company_id={self.company_id})>"

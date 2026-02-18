@@ -17,6 +17,7 @@ from app.pipelines.patent_signals import PatentSignalCollector
 from app.pipelines.leadership_signals import LeadershipSignalCollector
 from app.pipelines.glassdoor_collector import fetch_reviews as fetch_glassdoor_reviews
 from app.pipelines.board_analyzer import BoardCompositionAnalyzer, GovernanceSignal
+from app.pipelines.org_air_pipeline import OrgAIRPipeline, OrgAIRScores
 
 __all__ = [
     "SECEdgarPipeline",
@@ -31,4 +32,6 @@ __all__ = [
     "fetch_glassdoor_reviews",
     "BoardCompositionAnalyzer",
     "GovernanceSignal",
+    "OrgAIRPipeline",
+    "OrgAIRScores",
 ]

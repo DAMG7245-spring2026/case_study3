@@ -784,19 +784,17 @@ class SnowflakeService:
         confidence_upper: float,
         position_factor: float,
         talent_concentration: float,
-        assessment_type: str = "screening",
-        status: str = "approved",
     ) -> str:
         """Insert or update assessment scores for a company.
 
-        Stores V^R, H^R, Synergy, and CI bounds.
+        Stores V^R, H^R, Synergy, Org-AI-R, and CI bounds.
         Returns the assessment id.
         """
         from datetime import date
 
         existing = self.execute_one(
-            "SELECT id FROM assessments WHERE company_id = %s AND assessment_type = %s",
-            (company_id, assessment_type),
+            "SELECT id FROM assessments WHERE company_id = %s",
+            (company_id,),
         )
         now = datetime.now(timezone.utc)
         if existing:
@@ -804,11 +802,13 @@ class SnowflakeService:
             self.execute_write(
                 """UPDATE assessments
                    SET v_r_score = %s, h_r_score = %s, synergy = %s,
-                       confidence_lower = %s, confidence_upper = %s, status = %s,
+                       org_ai_r = %s,
+                       confidence_lower = %s, confidence_upper = %s,
                        position_factor = %s, talent_concentration = %s
                    WHERE id = %s""",
                 (v_r_score, round(h_r_score, 2), round(synergy, 2),
-                 confidence_lower, confidence_upper, status,
+                 round(org_air_score, 2),
+                 confidence_lower, confidence_upper,
                  round(position_factor, 4), round(talent_concentration, 4), aid),
             )
             logger.info(
@@ -820,13 +820,13 @@ class SnowflakeService:
             aid = str(uuid4())
             self.execute_write(
                 """INSERT INTO assessments
-                       (id, company_id, assessment_type, assessment_date, status,
-                        v_r_score, h_r_score, synergy,
+                       (id, company_id, assessment_date,
+                        v_r_score, h_r_score, synergy, org_ai_r,
                         confidence_lower, confidence_upper,
                         position_factor, talent_concentration, created_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (aid, company_id, assessment_type, date.today(), status,
-                 v_r_score, round(h_r_score, 2), round(synergy, 2),
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (aid, company_id, date.today(),
+                 v_r_score, round(h_r_score, 2), round(synergy, 2), round(org_air_score, 2),
                  confidence_lower, confidence_upper,
                  round(position_factor, 4), round(talent_concentration, 4), now),
             )
