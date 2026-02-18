@@ -91,7 +91,7 @@ from app.models.evidence import (
 )
 
 # CS3 Models - Evidence Mapper
-from app.models.evidence_mapper import (
+from app.pipelines.evidence_mapper.evidence_mapping_table import (
     DimensionMapping,
     EvidenceScore,
     DimensionScore,

@@ -1,7 +1,7 @@
 """DimensionScore ORM model."""
-from sqlalchemy import String, Integer, Float, DateTime, ForeignKey
+from sqlalchemy import String, Integer, Float, JSON, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 import uuid
 
@@ -20,20 +20,21 @@ class DimensionScore(Base):
     )
 
     # Fields
-    assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id"))
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
     dimension: Mapped[str] = mapped_column(String(30))
     score: Mapped[float] = mapped_column(Float)
-    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.8)
     evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    contributing_sources: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow
     )
 
     # Relationships
-    assessment: Mapped["Assessment"] = relationship(
-        "Assessment",
+    company: Mapped["Company"] = relationship(
+        "Company",
         back_populates="dimension_scores"
     )
 

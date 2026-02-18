@@ -40,6 +40,7 @@ class RubricResult:
     matched_keywords: List[str]
     keyword_match_count: int
     confidence: Decimal
+    rationale: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -305,10 +306,10 @@ DIMENSION_RUBRICS: Dict[str, List[RubricCriteria]] = {
         ),
     ],
     # ------------------------------------------------------------------
-    # 4. TALENT
+    # 4. TALENT_SKILLS
     #    Sources: TECHNOLOGY_HIRING (secondary), GLASSDOOR_REVIEWS (secondary)
     # ------------------------------------------------------------------
-    "talent": [
+    "talent_skills": [
         RubricCriteria(
             level=ScoreLevel.LEVEL_5,
             keywords=[
@@ -382,12 +383,12 @@ DIMENSION_RUBRICS: Dict[str, List[RubricCriteria]] = {
         ),
     ],
     # ------------------------------------------------------------------
-    # 5. LEADERSHIP
+    # 5. LEADERSHIP_VISION
     #    Sources: SEC_ITEM_7 (primary), LEADERSHIP_SIGNALS (primary),
     #             BOARD_COMPOSITION (primary), SEC_ITEM_1 (secondary),
     #             GLASSDOOR_REVIEWS (secondary)
     # ------------------------------------------------------------------
-    "leadership": [
+    "leadership_vision": [
         RubricCriteria(
             level=ScoreLevel.LEVEL_5,
             keywords=[
@@ -537,10 +538,10 @@ DIMENSION_RUBRICS: Dict[str, List[RubricCriteria]] = {
         ),
     ],
     # ------------------------------------------------------------------
-    # 7. CULTURE
+    # 7. CULTURE_CHANGE
     #    Sources: GLASSDOOR_REVIEWS (primary), LEADERSHIP_SIGNALS (secondary)
     # ------------------------------------------------------------------
-    "culture": [
+    "culture_change": [
         RubricCriteria(
             level=ScoreLevel.LEVEL_5,
             keywords=[

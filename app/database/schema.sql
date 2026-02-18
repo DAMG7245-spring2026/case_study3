@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS assessments (
     assessment_type VARCHAR(20) NOT NULL,
     assessment_date DATE NOT NULL,
     status VARCHAR(20) DEFAULT 'draft',
-    primary_assessor VARCHAR(255),
-    secondary_assessor VARCHAR(255),
+    h_r_score NUMBER(5,2),
+    synergy NUMBER(5,2),
     v_r_score DECIMAL(5,2),
     confidence_lower DECIMAL(5,2),
     confidence_upper DECIMAL(5,2),
@@ -49,12 +49,13 @@ CREATE TABLE IF NOT EXISTS assessments (
 -- =====================================================
 CREATE TABLE IF NOT EXISTS dimension_scores (
     id VARCHAR(36) PRIMARY KEY,
-    assessment_id VARCHAR(36) NOT NULL,
+    company_id VARCHAR(36) NOT NULL,
     dimension VARCHAR(30) NOT NULL,
     score DECIMAL(5,2) NOT NULL,
-    weight DECIMAL(4,3),
+    total_weight DECIMAL(4,3),
     confidence DECIMAL(4,3) DEFAULT 0.8,
     evidence_count INT DEFAULT 0,
+    contributing_sources VARIANT,
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 

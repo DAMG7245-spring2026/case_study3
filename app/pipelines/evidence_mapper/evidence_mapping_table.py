@@ -3,15 +3,7 @@ from typing import Dict, List, Optional
 from enum import Enum
 from decimal import Decimal
 
-
-class Dimension(str, Enum):
-    DATA_INFRASTRUCTURE = "data_infrastructure"
-    AI_GOVERNANCE = "ai_governance"
-    TECHNOLOGY_STACK = "technology_stack"
-    TALENT = "talent"
-    LEADERSHIP = "leadership"
-    USE_CASE_PORTFOLIO = "use_case_portfolio"
-    CULTURE = "culture"
+from app.models.enums import Dimension
 
 
 class SignalSource(str, Enum):
@@ -59,6 +51,7 @@ class DimensionScore:
     score: Decimal
     contributing_sources: List[SignalSource]
     total_weight: Decimal
+    confidence: Decimal = Decimal("0")
 
 
 # Mapper table define weights and reliabilities for each source-dimension mapping
@@ -68,18 +61,18 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
         primary_dimension=Dimension.TECHNOLOGY_STACK,
         primary_weight=Decimal("0.7"),
         secondary_mappings={
-            Dimension.TALENT: Decimal("0.2"),
-            Dimension.INNOVATION_ACTIVITY: Decimal("0.1"),
+            Dimension.TALENT_SKILLS: Decimal("0.2"),
+            Dimension.USE_CASE_PORTFOLIO: Decimal("0.1"),
         },
         reliability=Decimal("0.9"),
     ),
     SignalSource.INNOVATION_ACTIVITY: DimensionMapping(
         source=SignalSource.INNOVATION_ACTIVITY,
-        primary_dimension=Dimension.INNOVATION_ACTIVITY,
+        primary_dimension=Dimension.TECHNOLOGY_STACK,
         primary_weight=Decimal("0.8"),
         secondary_mappings={
-            Dimension.TECHNOLOGY_STACK: Decimal("0.1"),
-            Dimension.CULTURE: Decimal("0.1"),
+            Dimension.USE_CASE_PORTFOLIO: Decimal("0.1"),
+            Dimension.CULTURE_CHANGE: Decimal("0.1"),
         },
         reliability=Decimal("0.85"),
     ),
@@ -94,10 +87,10 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
     ),
     SignalSource.LEADERSHIP_SIGNALS: DimensionMapping(
         source=SignalSource.LEADERSHIP_SIGNALS,
-        primary_dimension=Dimension.LEADERSHIP,
+        primary_dimension=Dimension.LEADERSHIP_VISION,
         primary_weight=Decimal("0.7"),
         secondary_mappings={
-            Dimension.CULTURE: Decimal("0.1"),
+            Dimension.CULTURE_CHANGE: Decimal("0.1"),
             Dimension.AI_GOVERNANCE: Decimal("0.2"),
         },
         reliability=Decimal("0.95"),
@@ -108,7 +101,7 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
         primary_weight=Decimal("0.5"),
         secondary_mappings={
             Dimension.TECHNOLOGY_STACK: Decimal("0.2"),
-            Dimension.LEADERSHIP: Decimal("0.3"),
+            Dimension.LEADERSHIP_VISION: Decimal("0.3"),
         },
         reliability=Decimal("0.95"),
     ),
@@ -121,7 +114,7 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
     ),
     SignalSource.SEC_ITEM_7: DimensionMapping(
         source=SignalSource.SEC_ITEM_7,
-        primary_dimension=Dimension.LEADERSHIP,
+        primary_dimension=Dimension.LEADERSHIP_VISION,
         primary_weight=Decimal("0.6"),
         secondary_mappings={
             Dimension.USE_CASE_PORTFOLIO: Decimal("0.2"),
@@ -131,19 +124,19 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
     ),
     SignalSource.GLASSDOOR_REVIEWS: DimensionMapping(
         source=SignalSource.GLASSDOOR_REVIEWS,
-        primary_dimension=Dimension.CULTURE,
+        primary_dimension=Dimension.CULTURE_CHANGE,
         primary_weight=Decimal("0.7"),
         secondary_mappings={
-            Dimension.TALENT: Decimal("0.2"),
-            Dimension.LEADERSHIP: Decimal("0.1"),
+            Dimension.TALENT_SKILLS: Decimal("0.2"),
+            Dimension.LEADERSHIP_VISION: Decimal("0.1"),
         },
         reliability=Decimal("0.6"),
     ),
     SignalSource.BOARD_COMPOSITION: DimensionMapping(
         source=SignalSource.BOARD_COMPOSITION,
-        primary_dimension=Dimension.LEADERSHIP,
+        primary_dimension=Dimension.LEADERSHIP_VISION,
         primary_weight=Decimal("0.7"),
-        secondary_mappings={Dimension.LEADERSHIP: Decimal("0.3")},
+        secondary_mappings={Dimension.LEADERSHIP_VISION: Decimal("0.3")},
         reliability=Decimal("0.85"),
     ),
 }

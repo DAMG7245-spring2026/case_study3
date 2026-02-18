@@ -17,8 +17,6 @@ class AssessmentBase(BaseModel):
     assessment_date: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-    primary_assessor: Optional[str] = Field(None, max_length=255)
-    secondary_assessor: Optional[str] = Field(None, max_length=255)
 
 
 class AssessmentCreate(AssessmentBase):
@@ -30,8 +28,8 @@ class AssessmentUpdate(BaseModel):
     """Model for updating an assessment."""
     assessment_type: Optional[AssessmentType] = None
     assessment_date: Optional[datetime] = None
-    primary_assessor: Optional[str] = Field(None, max_length=255)
-    secondary_assessor: Optional[str] = Field(None, max_length=255)
+    h_r_score: Optional[float] = None
+    synergy: Optional[float] = None
     v_r_score: Optional[float] = Field(None, ge=0, le=100)
     confidence_lower: Optional[float] = Field(None, ge=0, le=100)
     confidence_upper: Optional[float] = Field(None, ge=0, le=100)
@@ -59,6 +57,8 @@ class AssessmentResponse(AssessmentBase):
     
     id: UUID
     status: AssessmentStatus = AssessmentStatus.DRAFT
+    h_r_score: Optional[float] = None
+    synergy: Optional[float] = None
     v_r_score: Optional[float] = Field(None, ge=0, le=100)
     confidence_lower: Optional[float] = Field(None, ge=0, le=100)
     confidence_upper: Optional[float] = Field(None, ge=0, le=100)
