@@ -693,6 +693,109 @@ class SnowflakeService:
             FROM companies WHERE id = %s AND is_deleted = FALSE"""
         return self.execute_one(query, (str(company_id),))
 
+    def get_dimension_scores(self, company_id: str) -> dict[str, float]:
+        """Return {dimension: score} for a company (empty dict if none)."""
+        rows = self.execute_query(
+            "SELECT dimension, score FROM dimension_scores WHERE company_id = %s",
+            (company_id,),
+        )
+        return {r["dimension"]: float(r["score"]) for r in rows}
+
+    def get_evidence_count(self, company_id: str) -> int:
+        """Total evidence items (signals + chunks) for CI width calculation."""
+        sig_row = self.execute_one(
+            "SELECT COUNT(*) AS cnt FROM external_signals WHERE company_id = %s",
+            (company_id,),
+        )
+        chunk_row = self.execute_one(
+            """SELECT COUNT(*) AS cnt FROM document_chunks dc
+               JOIN documents d ON dc.document_id = d.id
+               WHERE d.company_id = %s""",
+            (company_id,),
+        )
+        sig_cnt   = int((sig_row or {}).get("cnt", 0))
+        chunk_cnt = int((chunk_row or {}).get("cnt", 0))
+        return sig_cnt + chunk_cnt
+
+    def get_job_raw_payload(self, company_id: str) -> list[dict]:
+        """Fetch raw technology_hiring job postings for talent-concentration calc."""
+        import json
+        row = self.execute_one(
+            """SELECT payload FROM signal_raw_collections
+               WHERE company_id = %s AND category = 'technology_hiring'""",
+            (company_id,),
+        )
+        if not row or not row.get("payload"):
+            return []
+        p = row["payload"]
+        if isinstance(p, str):
+            p = json.loads(p)
+        return p if isinstance(p, list) else []
+
+    def upsert_assessment(
+        self,
+        company_id: str,
+        v_r_score: float,
+        h_r_score: float,
+        synergy: float,
+        org_air_score: float,
+        confidence_lower: float,
+        confidence_upper: float,
+        position_factor: float,
+        talent_concentration: float,
+        assessment_type: str = "screening",
+        status: str = "approved",
+    ) -> str:
+        """Insert or update assessment scores for a company.
+
+        Stores V^R, H^R, Synergy, and CI bounds.
+        Returns the assessment id.
+        """
+        from datetime import date
+
+        existing = self.execute_one(
+            "SELECT id FROM assessments WHERE company_id = %s AND assessment_type = %s",
+            (company_id, assessment_type),
+        )
+        now = datetime.now(timezone.utc)
+        if existing:
+            aid = existing["id"]
+            self.execute_write(
+                """UPDATE assessments
+                   SET v_r_score = %s, h_r_score = %s, synergy = %s,
+                       confidence_lower = %s, confidence_upper = %s, status = %s,
+                       position_factor = %s, talent_concentration = %s
+                   WHERE id = %s""",
+                (v_r_score, round(h_r_score, 2), round(synergy, 2),
+                 confidence_lower, confidence_upper, status,
+                 round(position_factor, 4), round(talent_concentration, 4), aid),
+            )
+            logger.info(
+                "assessment_updated company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f",
+                company_id, org_air_score, v_r_score, h_r_score, synergy,
+                position_factor, talent_concentration,
+            )
+        else:
+            aid = str(uuid4())
+            self.execute_write(
+                """INSERT INTO assessments
+                       (id, company_id, assessment_type, assessment_date, status,
+                        v_r_score, h_r_score, synergy,
+                        confidence_lower, confidence_upper,
+                        position_factor, talent_concentration, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (aid, company_id, assessment_type, date.today(), status,
+                 v_r_score, round(h_r_score, 2), round(synergy, 2),
+                 confidence_lower, confidence_upper,
+                 round(position_factor, 4), round(talent_concentration, 4), now),
+            )
+            logger.info(
+                "assessment_created company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f",
+                company_id, org_air_score, v_r_score, h_r_score, synergy,
+                position_factor, talent_concentration,
+            )
+        return aid
+
     def get_or_create_company(
         self,
         ticker: str,
