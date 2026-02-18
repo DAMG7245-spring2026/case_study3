@@ -39,7 +39,6 @@ else:
     with st.form("run_documents_pipeline"):
         company_labels = [x[0] for x in company_options]
         company_ids = [x[1] for x in company_options]
-        sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
         COMMON_FILING_TYPES = ["10-K", "10-Q", "8-K", "DEF 14A"]
         selected_filings = st.multiselect(
             "Filing types",
@@ -53,8 +52,6 @@ else:
             key="filing_types_custom",
         )
         if run_scope == "One company":
-            company_labels = [x[0] for x in company_options]
-            company_ids = [x[1] for x in company_options]
             sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
         st.caption("Select which filing types to collect:")
         filing_10k = st.checkbox("10-K", value=True, key="ft_10k")
