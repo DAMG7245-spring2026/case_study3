@@ -37,7 +37,6 @@ elif run_scope == "All companies" and not company_options:
     st.caption("Add at least one company (Companies page) to run the pipeline for all.")
 else:
     with st.form("run_documents_pipeline"):
-<<<<<<< HEAD
         company_labels = [x[0] for x in company_options]
         company_ids = [x[1] for x in company_options]
         sel_idx = st.selectbox("Company", range(len(company_labels)), format_func=lambda i: company_labels[i], key="run_company_select")
@@ -53,7 +52,6 @@ else:
             value="",
             key="filing_types_custom",
         )
-=======
         if run_scope == "One company":
             company_labels = [x[0] for x in company_options]
             company_ids = [x[1] for x in company_options]
@@ -63,7 +61,7 @@ else:
         filing_10q = st.checkbox("10-Q", value=True, key="ft_10q")
         filing_8k = st.checkbox("8-K", value=True, key="ft_8k")
         filing_def14a = st.checkbox("DEF-14A", value=False, key="ft_def14a")
->>>>>>> main
+
         years_back = st.number_input("Years back", min_value=1, max_value=10, value=3, key="years_back_run")
         run_clicked = st.form_submit_button("Run documents pipeline")
     if run_clicked:
