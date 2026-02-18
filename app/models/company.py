@@ -40,6 +40,7 @@ class CompanyBase(BaseModel):
     careers_url: Optional[str] = Field(None, max_length=500)
     news_url: Optional[str] = Field(None, max_length=500)
     leadership_url: Optional[str] = Field(None, max_length=500)
+    glassdoor_company_id: Optional[str] = Field(None, max_length=20)
 
     @field_validator("ticker")
     @classmethod
@@ -63,6 +64,7 @@ class CompanyUpdate(BaseModel):
     careers_url: Optional[str] = Field(None, max_length=500)
     news_url: Optional[str] = Field(None, max_length=500)
     leadership_url: Optional[str] = Field(None, max_length=500)
+    glassdoor_company_id: Optional[str] = Field(None, max_length=20)
 
     @field_validator("ticker")
     @classmethod

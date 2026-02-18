@@ -8,6 +8,7 @@ from streamlit_ui.components.api_client import (
     get_companies,
     get_signals,
     collect_signals,
+    collect_signals_all,
     get_signal_collection_logs,
     get_signal_formulas,
     compute_signals,
@@ -32,24 +33,35 @@ company_options = [
     if c.get("id") and c.get("ticker")
 ]
 
-if not company_options:
+run_scope = st.radio(
+    "Run for",
+    options=["One company", "All companies"],
+    index=0,
+    key="signals_run_scope",
+    horizontal=True,
+)
+if not company_options and run_scope == "One company":
     st.caption("Add at least one company (Companies page) to run the pipeline.")
+elif run_scope == "All companies" and not company_options:
+    st.caption("Add at least one company (Companies page) to run the pipeline for all.")
 else:
     with st.form("run_signals_pipeline"):
         company_labels = [x[0] for x in company_options]
         company_ids = [x[1] for x in company_options]
-        sel_idx = st.selectbox(
-            "Company",
-            range(len(company_labels)),
-            format_func=lambda i: company_labels[i],
-            key="signals_company_select",
-        )
+        if run_scope == "One company":
+            sel_idx = st.selectbox(
+                "Company",
+                range(len(company_labels)),
+                format_func=lambda i: company_labels[i],
+                key="signals_company_select",
+            )
         st.caption("Select which signal categories to collect:")
         cat_tech = st.checkbox("Technology hiring", value=True, key="sig_tech")
         cat_innovation = st.checkbox("Innovation activity", value=True, key="sig_innovation")
         cat_digital = st.checkbox("Digital presence", value=True, key="sig_digital")
         cat_leadership = st.checkbox("Leadership signals", value=True, key="sig_leadership")
         cat_glassdoor = st.checkbox("Glassdoor reviews", value=False, key="sig_glassdoor")
+        cat_board = st.checkbox("Board composition", value=False, key="sig_board")
         run_clicked = st.form_submit_button("Run signals pipeline")
 
     if run_clicked:
@@ -64,19 +76,30 @@ else:
             selected_categories.append("leadership_signals")
         if cat_glassdoor:
             selected_categories.append("glassdoor_reviews")
+        if cat_board:
+            selected_categories.append("board_composition")
         if not selected_categories:
             st.error("Select at least one signal category.")
         else:
-            company_id = company_ids[sel_idx]
-            company_label = company_labels[sel_idx]
             try:
-                resp = collect_signals(company_id, selected_categories, client=client)
-                task_id = resp.get("task_id", "")
-                st.session_state["signals_task_id"] = task_id
-                st.session_state["signals_last_company_id"] = company_id
-                st.session_state["signals_last_company_label"] = company_label
-                st.session_state["signals_last_categories"] = selected_categories
-                st.success("Signal collection started. See log below; then use the formula and Compute button.")
+                if run_scope == "All companies":
+                    resp = collect_signals_all(selected_categories, client=client)
+                    task_id = resp.get("task_id", "")
+                    st.session_state["signals_task_id"] = task_id
+                    st.session_state["signals_last_company_id"] = None
+                    st.session_state["signals_last_company_label"] = "All companies"
+                    st.session_state["signals_last_categories"] = selected_categories
+                    st.success(resp.get("message", "Signal collection started for all companies. See log below."))
+                else:
+                    company_id = company_ids[sel_idx]
+                    company_label = company_labels[sel_idx]
+                    resp = collect_signals(company_id, selected_categories, client=client)
+                    task_id = resp.get("task_id", "")
+                    st.session_state["signals_task_id"] = task_id
+                    st.session_state["signals_last_company_id"] = company_id
+                    st.session_state["signals_last_company_label"] = company_label
+                    st.session_state["signals_last_categories"] = selected_categories
+                    st.success("Signal collection started. See log below; then use the formula and Compute button.")
             except Exception as e:
                 st.error(f"Failed to start collection: {e}")
 
@@ -103,6 +126,8 @@ else:
             label_visibility="collapsed",
             key="signals_pipeline_log_output",
         )
+    if signals_task_id and st.session_state.get("signals_last_company_label") == "All companies":
+        st.caption("Collection was run for all companies. Run for a single company above to compute scores and view signals for that company.")
 
 # --- Formula and Compute (when we have a company from collect) ---
 last_company_id = st.session_state.get("signals_last_company_id")

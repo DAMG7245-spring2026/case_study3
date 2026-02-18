@@ -127,6 +127,12 @@ class DocumentCollectionRequest(BaseModel):
     years_back: int = Field(default=3, ge=1, le=10)
 
 
+class DocumentCollectAllRequest(BaseModel):
+    """Request to trigger document collection for all companies."""
+    filing_types: list[str] = Field(default=["10-K", "10-Q", "8-K"])
+    years_back: int = Field(default=3, ge=1, le=10)
+
+
 class DocumentCollectionResponse(BaseModel):
     """Response from document collection trigger."""
     task_id: str

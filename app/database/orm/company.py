@@ -34,6 +34,7 @@ class Company(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
+    glassdoor_company_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Relationships
     industry: Mapped["Industry"] = relationship(
