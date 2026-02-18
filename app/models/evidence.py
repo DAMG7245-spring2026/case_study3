@@ -52,6 +52,7 @@ class BackfillRequest(BaseModel):
     include_documents: bool = True
     include_signals: bool = True
     years_back: int = Field(default=3, ge=1, le=10)
+    filing_types: list[str] = Field(default=["10-K", "10-Q", "8-K"])
 
 
 class BackfillResponse(BaseModel):

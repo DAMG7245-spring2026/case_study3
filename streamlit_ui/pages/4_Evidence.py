@@ -80,15 +80,30 @@ with st.form("backfill_form"):
     include_documents = st.checkbox("Include documents", value=True)
     include_signals = st.checkbox("Include signals", value=True)
     years_back = st.slider("Years back", 1, 10, 3)
+    COMMON_FILING_TYPES = ["10-K", "10-Q", "8-K", "DEF 14A"]
+    filing_types_sel = st.multiselect(
+        "Filing types (documents)",
+        options=COMMON_FILING_TYPES,
+        default=["10-K", "10-Q", "8-K"],
+        key="backfill_filing_types",
+    )
+    custom_ft = st.text_input(
+        "Other filing types (comma-separated)",
+        value="",
+        key="backfill_custom_ft",
+    )
     submitted = st.form_submit_button("Run backfill")
     if submitted:
         tickers = selected_tickers if selected_tickers else None
+        extra_ft = [t.strip().upper() for t in custom_ft.split(",") if t.strip()]
+        merged_filing_types = list(dict.fromkeys(filing_types_sel + extra_ft))
         try:
             resp = post_backfill(
                 tickers=tickers,
                 include_documents=include_documents,
                 include_signals=include_signals,
                 years_back=years_back,
+                filing_types=merged_filing_types if merged_filing_types else None,
                 client=client,
             )
             st.success(resp.get("message", "Backfill queued."))
