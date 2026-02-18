@@ -1,16 +1,26 @@
-"""Glassdoor review collector: fetch raw reviews via ScrapFly (typeahead + BFF API). No scoring."""
+"""Glassdoor review collector: fetch raw reviews via RapidAPI (preferred) or ScrapFly (typeahead + BFF). No scoring."""
 
 import asyncio
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, List
+
+import httpx
 
 from app.config import get_settings
 from app.models.glassdoor import GlassdoorReview
 
 logger = logging.getLogger(__name__)
+
+# RapidAPI Glassdoor (real-time-glassdoor-data): target 30–40 reviews per company
+RAPIDAPI_GLASSDOOR_HOST = "real-time-glassdoor-data.p.rapidapi.com"
+TARGET_RAPIDAPI_REVIEWS_MIN = 30
+TARGET_RAPIDAPI_REVIEWS_MAX = 40
+RAPIDAPI_PAGE_SIZE = 10  # typical default; we'll paginate until we hit target
+RAPIDAPI_MAX_PAGES = 5  # cap to avoid runaway pagination and 429 rate limits
 
 # Cap pages to conserve ScrapFly API limit (each BFF request = 1 credit)
 MAX_SCRAPFLY_PAGES = 10
@@ -143,6 +153,202 @@ def _map_bff_review_to_model(raw: dict, root: dict | None = None) -> GlassdoorRe
         job_title=job_title,
         review_date=dt,
     )
+
+
+# --- RapidAPI (real-time-glassdoor-data) ---
+
+
+def _rapidapi_headers(api_key: str) -> dict:
+    return {
+        "x-rapidapi-host": RAPIDAPI_GLASSDOOR_HOST,
+        "x-rapidapi-key": api_key,
+    }
+
+
+def _extract_company_id_from_search_payload(payload: Any) -> str | None:
+    """Extract company_id from company-search response payload (list or dict with results/companies/items)."""
+    if payload is None:
+        return None
+    items: List[dict] = []
+    if isinstance(payload, list):
+        items = [x for x in payload if isinstance(x, dict)]
+    elif isinstance(payload, dict):
+        items = (
+            list(payload.get("results") or [])
+            or list(payload.get("companies") or [])
+            or list(payload.get("items") or [])
+        )
+        items = [x for x in items if isinstance(x, dict)]
+    if not items:
+        return None
+    first = items[0]
+    cid = first.get("company_id") or first.get("id") or first.get("employerId")
+    if cid is not None:
+        return str(cid)
+    return None
+
+
+def _get_company_id_rapidapi(company_name: str, api_key: str) -> str | None:
+    """Resolve Glassdoor company_id from company name via RapidAPI company-search. Tries query then q; flexible parsing."""
+    url = f"https://{RAPIDAPI_GLASSDOOR_HOST}/company-search"
+    headers = _rapidapi_headers(api_key)
+    for param_name in ("query", "q"):
+        params = {param_name: company_name}
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(url, headers=headers, params=params)
+                r.raise_for_status()
+                data = r.json()
+        except Exception as e:
+            logger.debug("rapidapi_glassdoor_company_search param=%s company=%s error=%s", param_name, company_name, e)
+            continue
+        payload = data.get("data") if isinstance(data, dict) else data
+        cid = _extract_company_id_from_search_payload(payload)
+        if cid:
+            return cid
+    logger.warning(
+        "rapidapi_glassdoor_no_company_id company=%s (tried query and q)",
+        company_name,
+    )
+    return None
+
+
+def _parse_rapidapi_review_date(v: Any) -> datetime | None:
+    """Parse review date from RapidAPI (ISO string or ms timestamp)."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    if isinstance(v, str):
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    if isinstance(v, (int, float)):
+        try:
+            ts = int(v)
+            return datetime.fromtimestamp(ts / 1000.0 if ts > 1e12 else ts)
+        except (ValueError, OSError):
+            pass
+    return None
+
+
+def _map_rapidapi_review_to_model(raw: dict) -> GlassdoorReview | None:
+    """Map one RapidAPI company-reviews item to GlassdoorReview. Returns None if required fields missing."""
+    review_id = raw.get("id") or raw.get("reviewId") or raw.get("review_id")
+    if review_id is None:
+        return None
+    review_id_str = str(review_id)
+    rating_val = raw.get("rating") or raw.get("overallRating") or raw.get("overall_rating") or raw.get("ratingOverall")
+    try:
+        rating = float(rating_val) if rating_val is not None else 3.0
+    except (TypeError, ValueError):
+        rating = 3.0
+    rating = max(1.0, min(5.0, rating))
+    title = (raw.get("summary") or raw.get("title") or raw.get("headline") or "") or ""
+    pros = (raw.get("pros") or "") or ""
+    cons = (raw.get("cons") or "") or ""
+    advice = raw.get("adviceToManagement") or raw.get("advice_to_management")
+    if advice is not None and not isinstance(advice, str):
+        advice = None
+    advice = (advice or "").strip() or None
+    is_current = bool(raw.get("isCurrentEmployee") or raw.get("is_current_employee") or False)
+    job_title = (raw.get("jobTitle") or raw.get("job_title") or "") or ""
+    dt = _parse_rapidapi_review_date(
+        raw.get("reviewDate") or raw.get("review_date") or raw.get("reviewDateTime") or raw.get("review_datetime") or raw.get("createdAt")
+    )
+    if dt is None:
+        return None
+    return GlassdoorReview(
+        review_id=review_id_str,
+        rating=rating,
+        title=title,
+        pros=pros,
+        cons=cons,
+        advice_to_management=advice,
+        is_current_employee=is_current,
+        job_title=job_title,
+        review_date=dt,
+    )
+
+
+def _fetch_reviews_via_rapidapi(
+    company_name: str,
+    limit: int,
+    api_key: str,
+    glassdoor_company_id: str | None = None,
+) -> List[GlassdoorReview]:
+    """
+    Fetch 30–40 (or up to limit) Glassdoor reviews using RapidAPI company-reviews.
+    When glassdoor_company_id is provided, skip company-search; otherwise resolve via company-search.
+    Returns [] if company not found or API errors.
+    """
+    company_name = (company_name or "").strip()
+    if not api_key:
+        return []
+    company_id = (glassdoor_company_id or "").strip() or None
+    if not company_id:
+        company_id = _get_company_id_rapidapi(company_name, api_key)
+    if not company_id:
+        return []
+    target = min(max(TARGET_RAPIDAPI_REVIEWS_MIN, limit), TARGET_RAPIDAPI_REVIEWS_MAX)
+    collected: List[GlassdoorReview] = []
+    page = 1
+    url = f"https://{RAPIDAPI_GLASSDOOR_HOST}/company-reviews"
+    headers = _rapidapi_headers(api_key)
+    while len(collected) < target:
+        if page > RAPIDAPI_MAX_PAGES:
+            break
+        params = {
+            "company_id": company_id,
+            "page": page,
+            "sort": "POPULAR",
+            "language": "en",
+            "only_current_employees": "false",
+            "extended_rating_data": "false",
+            "domain": "www.glassdoor.com",
+        }
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                r = client.get(url, headers=headers, params=params)
+                r.raise_for_status()
+                data = r.json()
+        except Exception as e:
+            logger.warning("rapidapi_glassdoor_reviews_failed company=%s page=%s error=%s", company_name, page, e)
+            break
+        # Normalize: data may be { "data": { "reviews": [...] } } or { "data": [...] } or { "reviews": [...] }
+        payload = data.get("data") if isinstance(data, dict) else data
+        if payload is None:
+            break
+        if isinstance(payload, dict):
+            raw_list = payload.get("reviews") or payload.get("items") or payload.get("results")
+        else:
+            raw_list = payload if isinstance(payload, list) else None
+        if not isinstance(raw_list, list) or len(raw_list) == 0:
+            if isinstance(payload, dict) and not payload.get("reviews") and page == 1:
+                logger.warning("rapidapi_glassdoor_no_reviews_key company=%s payload_keys=%s", company_name, list(payload.keys()))
+            break
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            if len(collected) >= target:
+                break
+            try:
+                rev = _map_rapidapi_review_to_model(item)
+                if rev is not None:
+                    collected.append(rev)
+            except Exception as e:
+                logger.debug("rapidapi_glassdoor_skip_review item_id=%s error=%s", item.get("review_id") or item.get("id"), e)
+        if len(raw_list) < RAPIDAPI_PAGE_SIZE:
+            break
+        page += 1
+        time.sleep(0.3)  # gentle rate limit between pages
+    logger.info(
+        "rapidapi_glassdoor_fetch_ok company=%s count=%s",
+        company_name,
+        len(collected),
+    )
+    return collected
 
 
 async def _fetch_reviews_async(
@@ -303,23 +509,36 @@ def fetch_reviews(
     company_name: str,
     ticker: str = "",
     limit: int = 100,
+    glassdoor_company_id: str | None = None,
 ) -> List[GlassdoorReview]:
     """
-    Fetch Glassdoor reviews for a company via ScrapFly (typeahead + BFF).
-    Returns [] if ScrapFly key is missing, company_name is blank, or scraping fails.
+    Fetch Glassdoor reviews for a company. Prefers RapidAPI (30–40 reviews) when key is set;
+    when glassdoor_company_id is provided, uses it and skips company-search. Otherwise falls back to ScrapFly if no RapidAPI.
+    Returns [] if no key, blank name, or failure.
     """
     company_name = (company_name or "").strip()
-    if not company_name:
-        logger.debug("glassdoor_fetch_skipped reason=no_company_name")
+    if not company_name and not (glassdoor_company_id or "").strip():
+        logger.debug("glassdoor_fetch_skipped reason=no_company_name_or_id")
         return []
     settings = get_settings()
-    api_key = (settings.scrapfly_api_key or "").strip()
-    if not api_key:
-        logger.info("glassdoor_fetch_skipped reason=no_scrapfly_key company=%s", company_name)
+    rapidapi_key = (settings.rapidapi_glassdoor_key or "").strip()
+    if rapidapi_key:
+        try:
+            reviews = _fetch_reviews_via_rapidapi(
+                company_name, limit, rapidapi_key, glassdoor_company_id=glassdoor_company_id
+            )
+            if reviews:
+                return reviews
+            logger.debug("glassdoor_rapidapi_returned_empty falling_back company=%s", company_name)
+        except Exception as e:
+            logger.warning("glassdoor_rapidapi_failed company=%s error=%s falling_back", company_name, e)
+    scrapfly_key = (settings.scrapfly_api_key or "").strip()
+    if not scrapfly_key:
+        logger.info("glassdoor_fetch_skipped reason=no_api_key company=%s", company_name)
         return []
     limit = min(max(1, limit), MAX_SCRAPFLY_PAGES * BFF_PAGE_SIZE)
     try:
-        return asyncio.run(_fetch_reviews_async(company_name, limit, api_key))
+        return asyncio.run(_fetch_reviews_async(company_name, limit, scrapfly_key))
     except Exception as e:
         logger.warning("glassdoor_fetch_failed company=%s error=%s", company_name, e)
         return []

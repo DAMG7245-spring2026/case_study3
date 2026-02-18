@@ -15,6 +15,7 @@ class SignalCategory(str, Enum):
     DIGITAL_PRESENCE = "digital_presence"
     LEADERSHIP_SIGNALS = "leadership_signals"
     GLASSDOOR_REVIEWS = "glassdoor_reviews"
+    BOARD_COMPOSITION = "board_composition"
 
 
 class SignalSource(str, Enum):
@@ -33,6 +34,7 @@ class SignalSource(str, Enum):
     CAREERS_AND_SERP = "careers_and_serp"
     COMPANY_NEWS = "company_news"
     JOBSPY = "jobspy"
+    SEC_FILING = "sec_filing"
 
 
 # --- Base Models ---
@@ -109,6 +111,18 @@ class CompanySignalSummaryResponse(CompanySignalSummaryBase):
 class SignalCollectionRequest(BaseModel):
     """Request to trigger signal collection."""
     company_id: UUID
+    categories: list[SignalCategory] = Field(
+        default=[
+            SignalCategory.TECHNOLOGY_HIRING,
+            SignalCategory.INNOVATION_ACTIVITY,
+            SignalCategory.DIGITAL_PRESENCE,
+            SignalCategory.LEADERSHIP_SIGNALS,
+        ]
+    )
+
+
+class SignalCollectAllRequest(BaseModel):
+    """Request to trigger signal collection for all companies."""
     categories: list[SignalCategory] = Field(
         default=[
             SignalCategory.TECHNOLOGY_HIRING,

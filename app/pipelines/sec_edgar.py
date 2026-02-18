@@ -10,6 +10,9 @@ from sec_edgar_downloader import Downloader
 
 logger = logging.getLogger(__name__)
 
+# sec_edgar_downloader expects "DEFA14A" (no hyphen), not "DEF-14A"
+FILING_TYPE_TO_LIBRARY: dict[str, str] = {"DEF-14A": "DEFA14A"}
+
 
 class RateLimiter:
     """Simple rate limiter for SEC EDGAR API (10 requests/second max)."""
@@ -106,6 +109,7 @@ class SECEdgarPipeline:
         downloaded = []
         
         for filing_type in filing_types:
+            library_form = FILING_TYPE_TO_LIBRARY.get(filing_type, filing_type)
             # Rate limit before each filing type request
             self.rate_limiter.wait()
             
@@ -117,8 +121,9 @@ class SECEdgarPipeline:
                     logger.info(f"Downloading {filing_type} for {ticker} (attempt {attempt}/{self.max_retries})")
                     
                     # Download filings (download_details=True to get PDF/HTML primary documents)
+                    # Library expects DEFA14A, not DEF-14A
                     self.dl.get(
-                        filing_type,
+                        library_form,
                         ticker,
                         limit=limit,
                         after=after,
@@ -147,8 +152,8 @@ class SECEdgarPipeline:
                 logger.error(f"Failed to download {filing_type} for {ticker} after {self.max_retries} attempts: {last_error}")
                 continue
             
-            # Find downloaded files
-            filing_dir = self.download_dir / "sec-edgar-filings" / ticker / filing_type
+            # Find downloaded files (library writes to directory named with library form, e.g. DEFA14A)
+            filing_dir = self.download_dir / "sec-edgar-filings" / ticker / library_form
             
             if filing_dir.exists():
                 for filing_path in filing_dir.glob("**/full-submission.txt"):
@@ -245,7 +250,8 @@ class SECEdgarPipeline:
 
     def get_filing_path(self, ticker: str, filing_type: str) -> Optional[Path]:
         """Get the path to downloaded filings for a company."""
-        filing_dir = self.download_dir / "sec-edgar-filings" / ticker / filing_type
+        library_form = FILING_TYPE_TO_LIBRARY.get(filing_type, filing_type)
+        filing_dir = self.download_dir / "sec-edgar-filings" / ticker / library_form
         return filing_dir if filing_dir.exists() else None
 
     def list_downloaded_filings(self, ticker: Optional[str] = None) -> list[Path]:
