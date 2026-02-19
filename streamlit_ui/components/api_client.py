@@ -480,3 +480,48 @@ def post_backfill(
     finally:
         if not client:
             c.close()
+
+
+def post_score_by_ticker(
+    ticker: str,
+    client: Optional[httpx.Client] = None,
+) -> dict[str, Any]:
+    """POST /api/v1/scores/score-by-ticker. Runs ScoringIntegrationService, returns Org-AI-R result."""
+    c = client or get_client()
+    try:
+        r = c.post("/api/v1/scores/score-by-ticker", json={"ticker": (ticker or "").strip().upper()})
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()
+
+
+def get_org_air(
+    company_id: str | UUID,
+    client: Optional[httpx.Client] = None,
+) -> dict[str, Any]:
+    """GET /api/v1/scores/companies/{company_id}/org-air. Returns current Org-AI-R result."""
+    c = client or get_client()
+    try:
+        r = c.get(f"/api/v1/scores/companies/{company_id}/org-air")
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()
+
+
+def get_dimension_scores(
+    company_id: str | UUID,
+    client: Optional[httpx.Client] = None,
+) -> list[dict[str, Any]]:
+    """GET /api/v1/scores/companies/{company_id}/dimension-scores. Returns list of dimension score rows."""
+    c = client or get_client()
+    try:
+        r = c.get(f"/api/v1/scores/companies/{company_id}/dimension-scores")
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()

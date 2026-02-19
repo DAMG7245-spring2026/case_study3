@@ -129,6 +129,63 @@ else:
     if signals_task_id and st.session_state.get("signals_last_company_label") == "All companies":
         st.caption("Collection was run for all companies. Run for a single company above to compute scores and view signals for that company.")
 
+# --- Compute from existing data (no fetch) ---
+st.subheader("Compute from existing data")
+st.caption("Run compute on stored raw data only. No API fetch. Pick a company and categories that already have raw data in the DB.")
+if company_options:
+    company_labels_co = [x[0] for x in company_options]
+    company_ids_co = [x[1] for x in company_options]
+    with st.form("compute_from_existing"):
+        co_sel_idx = st.selectbox(
+            "Company",
+            range(len(company_labels_co)),
+            format_func=lambda i: company_labels_co[i],
+            key="compute_only_company",
+        )
+        st.caption("Select which signal categories to compute (uses stored raw data):")
+        co_tech = st.checkbox("Technology hiring", value=True, key="co_tech")
+        co_innovation = st.checkbox("Innovation activity", value=True, key="co_innovation")
+        co_digital = st.checkbox("Digital presence", value=True, key="co_digital")
+        co_leadership = st.checkbox("Leadership signals", value=True, key="co_leadership")
+        co_glassdoor = st.checkbox("Glassdoor reviews", value=False, key="co_glassdoor")
+        co_board = st.checkbox("Board composition", value=False, key="co_board")
+        co_clicked = st.form_submit_button("Compute from stored raw data")
+    if co_clicked:
+        co_categories = []
+        if co_tech:
+            co_categories.append("technology_hiring")
+        if co_innovation:
+            co_categories.append("innovation_activity")
+        if co_digital:
+            co_categories.append("digital_presence")
+        if co_leadership:
+            co_categories.append("leadership_signals")
+        if co_glassdoor:
+            co_categories.append("glassdoor_reviews")
+        if co_board:
+            co_categories.append("board_composition")
+        if not co_categories:
+            st.error("Select at least one signal category.")
+        else:
+            try:
+                co_company_id = company_ids_co[co_sel_idx]
+                co_company_label = company_labels_co[co_sel_idx]
+                resp = compute_signals(co_company_id, co_categories, client=client)
+                computed = resp.get("computed") or []
+                msg = resp.get("message", "")
+                if computed:
+                    st.success(f"Computed: {', '.join(computed)}. {msg}")
+                    st.session_state["signals_last_company_id"] = co_company_id
+                    st.session_state["signals_last_company_label"] = co_company_label
+                    st.session_state["signals_last_categories"] = co_categories
+                else:
+                    st.info(msg or "No raw data found for selected categories.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Compute failed: {e}")
+else:
+    st.caption("Add at least one company (Companies page) to use compute from existing data.")
+
 # --- Formula and Compute (when we have a company from collect) ---
 last_company_id = st.session_state.get("signals_last_company_id")
 last_company_label = st.session_state.get("signals_last_company_label")
@@ -196,6 +253,56 @@ if last_company_id and last_company_label:
                 use_container_width=True,
                 hide_index=True,
             )
+
+            # --- Signal computation by category ---
+            st.subheader("Signal computation by category")
+            st.caption("Expand a category to see how its score was calculated.")
+            CATEGORY_ORDER = [
+                "technology_hiring",
+                "innovation_activity",
+                "digital_presence",
+                "leadership_signals",
+                "glassdoor_reviews",
+                "board_composition",
+            ]
+            CATEGORY_LABELS = {
+                "technology_hiring": "Technology hiring (job)",
+                "innovation_activity": "Innovation activity",
+                "digital_presence": "Digital presence",
+                "leadership_signals": "Leadership signals",
+                "glassdoor_reviews": "Glassdoor reviews",
+                "board_composition": "Board composition",
+            }
+            groups = {}
+            for s in items:
+                cat = s.get("category") or ""
+                groups.setdefault(cat, []).append(s)
+            try:
+                formulas_resp = get_signal_formulas(client=client)
+                formulas = formulas_resp.get("formulas") or {}
+            except Exception:
+                formulas = {}
+            for cat in CATEGORY_ORDER:
+                if cat not in groups or not groups[cat]:
+                    continue
+                label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
+                rep = groups[cat][0]
+                formula_text = formulas.get(cat, "(No formula description.)")
+                with st.expander(label, expanded=False):
+                    st.markdown("**Formula**")
+                    st.markdown(formula_text)
+                    st.markdown("**Computation for this company**")
+                    st.write("Score:", rep.get("normalized_score"), "| Confidence:", rep.get("confidence"))
+                    raw_val = rep.get("raw_value") or ""
+                    if raw_val:
+                        st.write("Raw value:", raw_val[:200] + ("..." if len(raw_val) > 200 else ""))
+                    meta = rep.get("metadata")
+                    if meta and isinstance(meta, dict):
+                        st.markdown("**Metadata**")
+                        st.json(meta)
+                    elif meta:
+                        st.markdown("**Metadata**")
+                        st.write(meta)
 
 # --- Final summary ---
 if last_company_id and last_company_label:

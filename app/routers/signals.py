@@ -116,6 +116,8 @@ SIGNAL_FORMULAS = {
     "innovation_activity": "Score from AI-related patents count and recency. raw_value = '{n} AI patents in {years} years'.",
     "digital_presence": "Score from tech stack (BuiltWith) and news page. raw_value combines AI tech count and article metrics.",
     "leadership_signals": "Score from leadership/commitment keywords on company or leadership URL. raw_value = summary of keyword hits.",
+    "glassdoor_reviews": "Culture score from Glassdoor reviews; raw_value = 'Culture score X from N reviews'. metadata may include evidence_count.",
+    "board_composition": "Score from board composition (diversity, committees, strategy text). metadata may include member count, committee info.",
 }
 
 
@@ -294,6 +296,41 @@ async def compute_signals(
                     signals_added += 1
                 if leadership_signals:
                     computed.append("leadership_signals")
+
+    if "glassdoor_reviews" in categories:
+        raw_row = db.get_raw_collection(company_id, "glassdoor_reviews")
+        if raw_row and raw_row.get("payload"):
+            from app.models.glassdoor import GlassdoorReview
+            from app.pipelines.glassdoor_collector import compute_culture_score_from_reviews
+
+            payload = raw_row["payload"]
+            if isinstance(payload, list) and len(payload) > 0:
+                reviews = []
+                for item in payload:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        reviews.append(GlassdoorReview.model_validate(item))
+                    except Exception:
+                        continue
+                if reviews:
+                    raw_score, confidence, evidence_count = compute_culture_score_from_reviews(
+                        str(company_id), ticker, reviews
+                    )
+                    db.delete_signals_by_company_and_category(company_id, "glassdoor_reviews")
+                    raw_value = f"Culture score {raw_score:.1f} from {evidence_count} reviews"[:500]
+                    db.insert_signal(
+                        company_id=company_id,
+                        category="glassdoor_reviews",
+                        source="glassdoor",
+                        signal_date=datetime.now(timezone.utc),
+                        raw_value=raw_value,
+                        normalized_score=raw_score,
+                        confidence=confidence,
+                        metadata={"evidence_count": evidence_count},
+                    )
+                    signals_added += 1
+                    computed.append("glassdoor_reviews")
 
     if "board_composition" in categories:
         raw_row = db.get_raw_collection(company_id, "board_composition")

@@ -125,18 +125,18 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
     SignalSource.GLASSDOOR_REVIEWS: DimensionMapping(
         source=SignalSource.GLASSDOOR_REVIEWS,
         primary_dimension=Dimension.CULTURE_CHANGE,
-        primary_weight=Decimal("0.7"),
+        primary_weight=Decimal("0.80"),
         secondary_mappings={
-            Dimension.TALENT_SKILLS: Decimal("0.2"),
-            Dimension.LEADERSHIP_VISION: Decimal("0.1"),
+            Dimension.TALENT_SKILLS: Decimal("0.10"),
+            Dimension.LEADERSHIP_VISION: Decimal("0.10"),
         },
         reliability=Decimal("0.6"),
     ),
     SignalSource.BOARD_COMPOSITION: DimensionMapping(
         source=SignalSource.BOARD_COMPOSITION,
-        primary_dimension=Dimension.LEADERSHIP_VISION,
-        primary_weight=Decimal("0.7"),
-        secondary_mappings={Dimension.LEADERSHIP_VISION: Decimal("0.3")},
+        primary_dimension=Dimension.AI_GOVERNANCE,
+        primary_weight=Decimal("0.70"),
+        secondary_mappings={Dimension.LEADERSHIP_VISION: Decimal("0.30")},
         reliability=Decimal("0.85"),
     ),
 }

@@ -23,20 +23,27 @@ st.set_page_config(
 )
 
 st.title("PE Org-AI-R Platform")
-st.caption("AI Readiness Assessment for Private Equity — Case Study 2: Evidence Collection")
+st.caption("AI Readiness Assessment for Private Equity — Scoring Flow & Evidence")
 
 st.markdown("""
 **What companies say (SEC filings) vs. what they do (external signals).**
 
 Use the **sidebar** to open:
 
-- **Companies** — List, add, and update companies (industry, URLs for signal pipeline)
-- **Dashboard** — Evidence stats, target companies, breakdowns
-- **Documents** — SEC filings list, detail, chunks, and JSON
-- **Signals** — External signals list, company summary, JSON
-- **Evidence** — Full evidence per company, trigger backfill
-- **Logs** — Run collection from the UI and view live logs
-- **JSON Data** — Call any endpoint and view raw JSON
+**Scoring (select company + Run Pipeline):**
+- **Scoring Dashboard** — Org-AI-R, V^R, H^R, Synergy, 7-dimension chart, CI, TC, PF
+- **Evidence Pipeline** — CS2/CS3 signals and coverage summary
+- **Dimension Scoring** — Signal-to-dimension mapping, rubric results
+- **Portfolio View** — Compare up to 5 companies (table + bar charts)
+- **Audit Trail** — Step-by-step pipeline breakdown
+- **Org-AI-R Calculator** — Company Details form: manual V^R, H^R, Synergy, CI inputs → calculate score
+
+**Data:**
+- **Companies** — List, add, and update companies
+- **Dashboard** — Evidence stats, target companies
+- **Documents** — SEC filings list and detail
+- **Signals** — External signals, collect and compute
+- **Evidence** — Full evidence per company, backfill
 """)
 
 st.info("Ensure the FastAPI backend is running (e.g. `poetry run uvicorn app.main:app --reload`) and set `STREAMLIT_API_URL` if needed.")

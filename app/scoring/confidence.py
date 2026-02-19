@@ -12,7 +12,7 @@ Formulas
 
   Confidence Interval:
       CI = score ± z × SEM
-      z  = scipy.stats.norm.ppf((1 + confidence_level) / 2)
+      z  = standard normal quantile for (1 + confidence_level) / 2
 """
 import math
 from dataclasses import dataclass
@@ -20,9 +20,33 @@ from decimal import Decimal
 from typing import Optional
 
 import structlog
-from scipy.stats import norm
 
 from app.scoring.utils import clamp, to_decimal
+
+
+def _erfinv(y: float) -> float:
+    """Inverse of erf (solve erf(x) = y for x) using Newton-Raphson. No scipy."""
+    if y <= -1.0 or y >= 1.0:
+        raise ValueError("y must be in (-1, 1)")
+    k = 2.0 / math.sqrt(math.pi)
+    x = 0.0
+    for _ in range(50):
+        err = math.erf(x) - y
+        if abs(err) < 1e-12:
+            return x
+        x = x - err / (k * math.exp(-x * x))
+    return x
+
+
+def _norm_ppf(p: float) -> float:
+    """Standard normal quantile (inverse CDF) without scipy.
+
+    Returns z such that P(Z <= z) = p for Z ~ N(0, 1).
+    Phi(z) = (1 + erf(z/sqrt(2)))/2 => z = sqrt(2)*erfinv(2*p - 1).
+    """
+    if p <= 0.0 or p >= 1.0:
+        raise ValueError("p must be in (0, 1)")
+    return math.sqrt(2.0) * _erfinv(2.0 * p - 1.0)
 
 logger = structlog.get_logger(__name__)
 
@@ -123,8 +147,8 @@ class ConfidenceCalculator:
         sigma = self.population_sd.get(score_type.lower(), _DEFAULT_SD)
         sem = sigma * to_decimal(math.sqrt(float(Decimal("1") - rho)))
 
-        # z-score for the desired confidence level
-        z = to_decimal(norm.ppf((1.0 + confidence_level) / 2.0))
+        # z-score for the desired confidence level (scipy-free)
+        z = to_decimal(_norm_ppf((1.0 + confidence_level) / 2.0))
 
         margin   = z * sem
         ci_lower = clamp(score - margin)

@@ -789,6 +789,7 @@ class SnowflakeService:
 
         Stores V^R, H^R, Synergy, Org-AI-R, and CI bounds.
         Returns the assessment id.
+        (assessment_type and status are ignored; columns were dropped in migration 010.)
         """
         from datetime import date
 

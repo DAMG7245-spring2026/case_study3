@@ -5,8 +5,8 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
-from typing import Any, List
+from datetime import datetime, timezone, timedelta
+from typing import Any, List, Tuple
 
 import httpx
 
@@ -270,6 +270,125 @@ def _map_rapidapi_review_to_model(raw: dict) -> GlassdoorReview | None:
         job_title=job_title,
         review_date=dt,
     )
+
+
+# --- Culture scoring (PDF Task 5.0c: Glassdoor → Culture dimension) ---
+
+INNOVATION_POSITIVE = [
+    "innovative", "cutting-edge", "forward-thinking",
+    "encourages new ideas", "experimental", "creative freedom",
+    "startup mentality", "move fast", "disruptive",
+]
+INNOVATION_NEGATIVE = [
+    "bureaucratic", "slow to change", "resistant",
+    "outdated", "stuck in old ways", "red tape",
+    "politics", "siloed", "hierarchical",
+]
+DATA_DRIVEN_KEYWORDS = [
+    "data-driven", "metrics", "evidence-based",
+    "analytical", "kpis", "dashboards", "data culture",
+    "measurement", "quantitative",
+]
+AI_AWARENESS_KEYWORDS = [
+    "ai", "artificial intelligence", "machine learning",
+    "automation", "data science", "ml", "algorithms",
+    "predictive", "neural network",
+]
+CHANGE_POSITIVE = [
+    "agile", "adaptive", "fast-paced", "embraces change",
+    "continuous improvement", "growth mindset",
+]
+CHANGE_NEGATIVE = [
+    "rigid", "traditional", "slow", "risk-averse",
+    "change resistant", "old school",
+]
+
+RECENCY_DAYS_FULL_WEIGHT = 730  # 2 years
+CURRENT_EMPLOYEE_MULTIPLIER = 1.2
+
+
+def _count_keywords_in_text(text: str, keywords: List[str]) -> int:
+    """Count how many of the keywords appear in text (case-insensitive)."""
+    lower = text.lower()
+    return sum(1 for kw in keywords if kw in lower)
+
+
+def compute_culture_score_from_reviews(
+    company_id: str,
+    ticker: str,
+    reviews: List[GlassdoorReview],
+) -> Tuple[float, float, int]:
+    """
+    Score Glassdoor reviews for culture (PDF Task 5.0c).
+
+    Uses keyword counts with recency and current-employee weights.
+    Overall = 0.30 * innovation + 0.25 * data_driven + 0.25 * ai_awareness + 0.20 * change_readiness.
+    All component scores clamped to [0, 100].
+
+    Returns:
+        (raw_score 0-100, confidence 0-1, evidence_count)
+    """
+    if not reviews:
+        return 50.0, 0.0, 0
+
+    now = datetime.now(timezone.utc)
+    total_weight = 0.0
+    innovation_positive = 0.0
+    innovation_negative = 0.0
+    data_driven_mentions = 0.0
+    ai_awareness_mentions = 0.0
+    change_positive = 0.0
+    change_negative = 0.0
+
+    for review in reviews:
+        text = f"{review.pros} {review.cons} {review.advice_to_management or ''}".lower()
+        try:
+            if review.review_date.tzinfo is not None:
+                delta = now - review.review_date
+            else:
+                delta = now.replace(tzinfo=None) - review.review_date
+            days_old = delta.days
+        except Exception:
+            days_old = 365
+        recency_weight = 1.0 if days_old < RECENCY_DAYS_FULL_WEIGHT else 0.5
+        employee_weight = CURRENT_EMPLOYEE_MULTIPLIER if review.is_current_employee else 1.0
+        weight = recency_weight * employee_weight
+        total_weight += weight
+
+        innovation_positive += weight * _count_keywords_in_text(text, INNOVATION_POSITIVE)
+        innovation_negative += weight * _count_keywords_in_text(text, INNOVATION_NEGATIVE)
+        data_driven_mentions += weight * _count_keywords_in_text(text, DATA_DRIVEN_KEYWORDS)
+        ai_awareness_mentions += weight * _count_keywords_in_text(text, AI_AWARENESS_KEYWORDS)
+        change_positive += weight * _count_keywords_in_text(text, CHANGE_POSITIVE)
+        change_negative += weight * _count_keywords_in_text(text, CHANGE_NEGATIVE)
+
+    if total_weight <= 0:
+        return 50.0, 0.0, len(reviews)
+
+    # Component scores (0-100)
+    innovation = (innovation_positive - innovation_negative) / total_weight * 50 + 50
+    innovation = max(0.0, min(100.0, innovation))
+
+    data_driven = (data_driven_mentions / total_weight) * 100
+    data_driven = max(0.0, min(100.0, data_driven))
+
+    ai_awareness = (ai_awareness_mentions / total_weight) * 100
+    ai_awareness = max(0.0, min(100.0, ai_awareness))
+
+    change_readiness = (change_positive - change_negative) / total_weight * 50 + 50
+    change_readiness = max(0.0, min(100.0, change_readiness))
+
+    overall = (
+        0.30 * innovation
+        + 0.25 * data_driven
+        + 0.25 * ai_awareness
+        + 0.20 * change_readiness
+    )
+    overall = max(0.0, min(100.0, overall))
+
+    confidence = min(0.9, 0.3 + len(reviews) / 50.0)
+
+    return round(overall, 2), round(confidence, 4), len(reviews)
 
 
 def _fetch_reviews_via_rapidapi(

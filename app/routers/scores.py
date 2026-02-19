@@ -1,14 +1,30 @@
 """Dimension score endpoints + Org-AI-R scoring endpoints."""
 
+import asyncio
 import json
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from app.models import DimensionScoreUpdate, DimensionScoreResponse
 from app.models.enums import Dimension
 from app.pipelines.dimension_scorer import DimensionScoringPipeline
-from app.pipelines.org_air_pipeline import OrgAIRPipeline, OrgAIRScores
+from app.pipelines.org_air_pipeline import (
+    OrgAIRPipeline,
+    OrgAIRScores,
+    _alignment,
+    _MARKET_CAP_PCT,
+    _SECTOR_MAP,
+    _TIMING_FACTOR,
+)
+from app.scoring.confidence import ConfidenceCalculator
+from app.scoring.hr_calculator import HRCalculator
+from app.scoring.org_air_calculator import OrgAIRCalculator
+from app.scoring.position_factor import PositionFactorCalculator
+from app.scoring.synergy_calculator import SynergyCalculator
+from app.scoring.talent_concentration import TalentConcentrationCalculator
+from app.scoring.vr_calculator import VRCalculator
+from app.scoring.integration_service import ScoringIntegrationService
 from app.services import get_snowflake_service, get_redis_cache, CacheKeys
 
 # ── response schema ───────────────────────────────────────────────────────────
@@ -173,7 +189,18 @@ async def compute_dimension_scores(company_id: UUID):
     # Invalidate company cache
     cache.delete(CacheKeys.company(str(company_id)))
 
-    # Return freshly persisted scores
+    return _get_dimension_scores_rows(str(company_id))
+
+
+def _get_dimension_scores_rows(company_id: str):
+    """Shared: query dimension_scores and parse to list of DimensionScoreResponse."""
+    db = get_snowflake_service()
+    company = db.execute_one(
+        "SELECT id FROM companies WHERE id = %s AND is_deleted = FALSE",
+        (company_id,),
+    )
+    if not company:
+        return None
     rows = db.execute_query(
         """
         SELECT id, company_id, dimension, score, total_weight, confidence,
@@ -182,7 +209,7 @@ async def compute_dimension_scores(company_id: UUID):
         WHERE company_id = %s
         ORDER BY dimension
         """,
-        (str(company_id),),
+        (company_id,),
     )
 
     def _parse_sources(val) -> list:
@@ -204,6 +231,115 @@ async def compute_dimension_scores(company_id: UUID):
         )
         for r in rows
     ]
+
+
+@router.get(
+    "/companies/{company_id}/dimension-scores",
+    response_model=list[DimensionScoreResponse],
+    summary="Get Dimension Scores",
+)
+async def get_dimension_scores(company_id: UUID):
+    """Return stored dimension scores for a company (read-only)."""
+    result = _get_dimension_scores_rows(str(company_id))
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Company {company_id} not found",
+        )
+    return result
+
+
+# ── shared calculators (module-level singletons) ──────────────────────────────
+_tc_calc   = TalentConcentrationCalculator()
+_vr_calc   = VRCalculator()
+_pf_calc   = PositionFactorCalculator()
+_hr_calc   = HRCalculator()
+_syn_calc  = SynergyCalculator()
+_ci_calc   = ConfidenceCalculator()
+_org_calc  = OrgAIRCalculator(confidence_calculator=_ci_calc)
+
+
+def _run_org_air_for_company(company_id: str, db) -> OrgAIRResponse:
+    """Core scoring logic shared by compute and GET endpoints."""
+    # Company + industry info
+    co = db.execute_one(
+        "SELECT id, name, ticker, industry_id FROM companies WHERE id = %s AND is_deleted = FALSE",
+        (company_id,),
+    )
+    if not co:
+        raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+    industries = {
+        r["id"]: r
+        for r in db.execute_query("SELECT id, name, sector, h_r_base FROM industries")
+    }
+    industry_row = industries.get(co["industry_id"], {})
+    db_sector   = industry_row.get("sector", "Services")
+    pf_sector   = _SECTOR_MAP.get(db_sector, "business_services")
+    h_r_base    = float(industry_row.get("h_r_base", 65.0))
+    ticker      = co["ticker"]
+    mcap_pct    = _MARKET_CAP_PCT.get(ticker, 0.5)
+
+    # Dimension scores (already computed)
+    dim_scores    = db.get_dimension_scores(company_id)
+    evidence_count = max(1, db.get_evidence_count(company_id))
+
+    # TC from raw job postings
+    job_postings = db.get_job_raw_payload(company_id)
+    job_analysis = _tc_calc.analyze_job_postings(job_postings)
+    tc           = _tc_calc.calculate_tc(job_analysis)
+
+    # V^R
+    vr_result = _vr_calc.calculate(dim_scores, float(tc))
+
+    # Position Factor
+    pf = _pf_calc.calculate_position_factor(
+        vr_score=float(vr_result.vr_score),
+        sector=pf_sector,
+        market_cap_percentile=mcap_pct,
+    )
+
+    # H^R
+    hr_result = _hr_calc.calculate(
+        sector=pf_sector,
+        position_factor=float(pf),
+        baseline_override=h_r_base,
+    )
+
+    # Synergy
+    syn_result = _syn_calc.calculate(
+        vr_score=vr_result.vr_score,
+        hr_score=hr_result.hr_score,
+        alignment=_alignment(dim_scores),
+        timing_factor=_TIMING_FACTOR,
+    )
+
+    # Org-AI-R
+    org_result = _org_calc.calculate(
+        company_id=company_id,
+        sector=pf_sector,
+        vr_result=vr_result,
+        hr_result=hr_result,
+        synergy_result=syn_result,
+        evidence_count=evidence_count,
+    )
+
+    return OrgAIRResponse(
+        company_id=UUID(company_id),
+        ticker=ticker,
+        company_name=co["name"],
+        sector=pf_sector,
+        vr_score=round(float(vr_result.vr_score), 2),
+        hr_score=round(float(hr_result.hr_score), 2),
+        synergy_score=round(float(syn_result.synergy_score), 2),
+        org_air_score=round(float(org_result.final_score), 2),
+        confidence_lower=round(float(org_result.confidence_interval.ci_lower), 2),
+        confidence_upper=round(float(org_result.confidence_interval.ci_upper), 2),
+        talent_concentration=round(float(tc), 4),
+        position_factor=round(float(pf), 4),
+        evidence_count=evidence_count,
+        dimension_scores={k: round(v, 2) for k, v in dim_scores.items()},
+    )
 
 
 @router.post(
@@ -410,3 +546,34 @@ async def list_org_air(ticker: Optional[str] = None):
             continue  # skip companies with insufficient data
 
     return results
+
+
+class ScoreByTickerRequest(BaseModel):
+    """Request body for score-company-by-ticker (Integration Service)."""
+    ticker: str = Field(..., min_length=1, description="Company ticker symbol")
+
+
+@router.post(
+    "/score-by-ticker",
+    summary="Score Company by Ticker (Integration Service)",
+    tags=["Org-AI-R Scoring"],
+)
+async def score_company_by_ticker(request: Request, body: ScoreByTickerRequest):
+    """Run the full pipeline via ScoringIntegrationService (Task 6.0b).
+
+    Fetches company from CS1, evidence from CS2, runs dimension scoring,
+    TC → V^R → PF → H^R → Synergy → Org-AI-R, and persists to CS1.
+    Uses this app as both CS1 and CS2 when base_url is this server.
+    """
+    base = str(request.base_url).rstrip("/")
+    service = ScoringIntegrationService(cs1_api_url=base, cs2_api_url=base)
+    ticker = body.ticker.strip().upper()
+    try:
+        # Run in executor to avoid blocking the event loop; service makes HTTP calls to this same server.
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: service.score_company(ticker))
+        return result
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

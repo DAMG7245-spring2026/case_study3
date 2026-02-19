@@ -34,6 +34,7 @@ CATEGORY_TO_SOURCE: dict[str, SignalSource] = {
     "digital_presence": SignalSource.DIGITAL_PRESENCE,
     "leadership_signals": SignalSource.LEADERSHIP_SIGNALS,
     "glassdoor_reviews": SignalSource.GLASSDOOR_REVIEWS,
+    "board_composition": SignalSource.BOARD_COMPOSITION,
 }
 
 # Map document_chunks.section → SignalSource enum
