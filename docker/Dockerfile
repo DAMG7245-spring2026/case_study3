@@ -3,10 +3,19 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (gcc/curl for build; rest required by WeasyPrint)
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz0b \
+    libffi-dev \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    libjpeg-dev \
+    libopenjp2-7 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
