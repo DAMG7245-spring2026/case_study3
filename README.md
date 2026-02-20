@@ -8,7 +8,11 @@ AI Readiness Assessment Platform for Private Equity Portfolio Companies with aut
 - Streamlit UI URL: http://35.93.9.162:8501
 - Demo video link: https://youtu.be/xpflYeUJdp0
 - google colab doc: https://codelabs-preview.appspot.com/?file_id=1ObtcVTcTSMoM_9oB4PaTuLT-OJgGIZe-5PG6L3d2urw
+<<<<<<< HEAD
 - google docs:
+=======
+- google docs: https://docs.google.com/document/d/1ObtcVTcTSMoM_9oB4PaTuLT-OJgGIZe-5PG6L3d2urw/edit?tab=t.0
+>>>>>>> origin/main
 
 ## 🎯 Project Overview
 
