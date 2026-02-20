@@ -53,13 +53,13 @@ except Exception as e:
     total = 0
 
 # Delete confirmation as modal popup (st.dialog requires Streamlit 1.33+)
-def _render_delete_dialog(client, pending):
+def _render_delete_dialog(pending):
     st.warning(f"Delete **{pending.get('name', '')}** ({pending.get('ticker', '')})? This cannot be undone.")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Confirm delete", type="primary", key="confirm_delete"):
             try:
-                delete_company(pending["id"], client=client)
+                delete_company(pending["id"])
                 st.session_state["company_to_delete"] = None
                 if hasattr(st, "rerun"):
                     st.rerun()
@@ -85,12 +85,12 @@ if "company_to_delete" in st.session_state and st.session_state["company_to_dele
 
         @st.dialog("Delete company", dismissible=True, on_dismiss=_clear_pending)
         def _confirm_delete_modal():
-            _render_delete_dialog(client, pending)
+            _render_delete_dialog(pending)
 
         _confirm_delete_modal()
     else:
         # Fallback: inline confirmation for older Streamlit
-        _render_delete_dialog(client, pending)
+        _render_delete_dialog(pending)
         st.stop()
 
 if items:
@@ -189,7 +189,6 @@ if st.session_state.get("show_add_company_modal") and hasattr(st, "dialog"):
                             name=name,
                             ticker=ticker_norm,
                             industry_id=industry_id,
-                            client=client,
                             domain=domain or None,
                             careers_url=careers_url or None,
                             news_url=news_url or None,
@@ -265,7 +264,6 @@ if edit_id and hasattr(st, "dialog"):
                     try:
                         update_company(
                             edit_id,
-                            client=client,
                             name=upd_name or None,
                             industry_id=upd_industry_id,
                             domain=upd_domain or None,

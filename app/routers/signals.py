@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from app.models.signal import (
@@ -116,7 +116,7 @@ SIGNAL_FORMULAS = {
     "innovation_activity": "Score from AI-related patents count and recency. raw_value = '{n} AI patents in {years} years'.",
     "digital_presence": "Score from tech stack (BuiltWith) and news page. raw_value combines AI tech count and article metrics.",
     "leadership_signals": "Score from leadership/commitment keywords on company or leadership URL. raw_value = summary of keyword hits.",
-    "glassdoor_reviews": "Culture score from Glassdoor reviews; raw_value = 'Culture score X from N reviews'. metadata may include evidence_count.",
+    "glassdoor_reviews": "Culture score from Glassdoor reviews; raw_value = 'Culture score X from N reviews'. metadata may include evidence_count, component_scores (innovation, data_driven, ai_awareness, change_readiness), keywords_matched.",
     "board_composition": "Score from board composition (diversity, committees, strategy text). metadata may include member count, committee info.",
 }
 
@@ -156,7 +156,14 @@ async def compute_signals(
     ticker = (company.get("ticker") or "UNKNOWN").upper()
 
     if not categories:
-        categories = ["technology_hiring", "innovation_activity", "digital_presence", "leadership_signals", "board_composition"]
+        categories = [
+            "technology_hiring",
+            "innovation_activity",
+            "digital_presence",
+            "leadership_signals",
+            "glassdoor_reviews",
+            "board_composition",
+        ]
 
     hiring_score = 0.0
     innovation_score = 0.0
@@ -314,20 +321,25 @@ async def compute_signals(
                     except Exception:
                         continue
                 if reviews:
-                    raw_score, confidence, evidence_count = compute_culture_score_from_reviews(
+                    result = compute_culture_score_from_reviews(
                         str(company_id), ticker, reviews
                     )
                     db.delete_signals_by_company_and_category(company_id, "glassdoor_reviews")
-                    raw_value = f"Culture score {raw_score:.1f} from {evidence_count} reviews"[:500]
+                    raw_value = f"Culture score {result.overall:.1f} from {result.evidence_count} reviews"[:500]
+                    metadata = {
+                        "evidence_count": result.evidence_count,
+                        "component_scores": result.component_scores,
+                        "keywords_matched": result.keywords_matched,
+                    }
                     db.insert_signal(
                         company_id=company_id,
                         category="glassdoor_reviews",
                         source="glassdoor",
                         signal_date=datetime.now(timezone.utc),
                         raw_value=raw_value,
-                        normalized_score=raw_score,
-                        confidence=confidence,
-                        metadata={"evidence_count": evidence_count},
+                        normalized_score=result.overall,
+                        confidence=result.confidence,
+                        metadata=metadata,
                     )
                     signals_added += 1
                     computed.append("glassdoor_reviews")
@@ -483,6 +495,71 @@ async def get_company_signals_by_category(
     )
     
     return [ExternalSignalResponse(**s) for s in signals]
+
+
+class RawGlassdoorReviewsResponse(BaseModel):
+    """Response after storing raw Glassdoor reviews."""
+
+    stored: int
+    company_id: str
+    message: str
+
+
+@router.put(
+    "/companies/{company_id}/raw/glassdoor_reviews",
+    response_model=RawGlassdoorReviewsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def put_raw_glassdoor_reviews(
+    company_id: UUID,
+    request: Request,
+    db: SnowflakeService = Depends(get_snowflake_service),
+):
+    """Store raw Glassdoor review JSON for a company. Body: list of review objects, or object with 'reviews' key (e.g. data/NVDA.json). Run Compute for glassdoor_reviews to get culture score."""
+    from app.models.glassdoor import GlassdoorReview
+
+    body = await request.json()
+    if isinstance(body, dict) and "reviews" in body:
+        reviews_list = body["reviews"]
+    elif isinstance(body, list):
+        reviews_list = body
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Body must be a JSON array of review objects or an object with a 'reviews' key (array).",
+        )
+    if not isinstance(reviews_list, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'reviews' must be an array.",
+        )
+
+    company = db.get_company_by_id(company_id)
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+    validated = []
+    for i, item in enumerate(reviews_list):
+        if not isinstance(item, dict):
+            continue
+        try:
+            r = GlassdoorReview.model_validate(item)
+            validated.append(r.model_dump(mode="json"))
+        except Exception:
+            logger.warning("put_raw_glassdoor_reviews skip invalid item at index %s", i)
+            continue
+    if not validated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid review objects found. Each item must have review_id, rating (1-5), review_date (ISO), and optional pros, cons, etc.",
+        )
+
+    db.insert_or_replace_raw_collection(company_id, "glassdoor_reviews", validated)
+    return RawGlassdoorReviewsResponse(
+        stored=len(validated),
+        company_id=str(company_id),
+        message="Run Compute for glassdoor_reviews to get culture score.",
+    )
 
 
 # --- Background Tasks ---

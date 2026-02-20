@@ -67,6 +67,9 @@ class ScoringIntegrationService:
         if evidence_scores:
             logger.debug("Built %d evidence scores for company %s", len(evidence_scores), company_id)
 
+        # Ensure raw data is converted to signals before dimension scoring (ideal flow step 3–4)
+        self._ensure_signals_computed(company_id)
+
         # Run full pipeline and persist (dimension scoring, TC, VR, PF, HR, Synergy, Org-AI-R)
         response = self._persist_assessment(company_id)
         if not response:
@@ -210,6 +213,28 @@ class ScoringIntegrationService:
         governance = dimension_scores.get("ai_governance", 50.0)
         raw = (0.6 * leadership + 0.4 * governance) / 100.0
         return max(0.5, min(0.95, raw))
+
+    def _ensure_signals_computed(self, company_id: str) -> None:
+        """
+        Convert any stored raw data to signals before dimension scoring (ideal flow).
+        POST signals/compute with company_id; no categories = all six (including glassdoor_reviews).
+        Non-fatal errors (404, 5xx) are logged and ignored so we still proceed to compute-org-air.
+        """
+        url = f"{self.cs1_api_url}/api/v1/signals/compute"
+        with httpx.Client(timeout=self.timeout) as client:
+            try:
+                r = client.post(url, json={"company_id": company_id})
+                r.raise_for_status()
+                logger.debug("signals_compute_ok company_id=%s", company_id)
+            except httpx.HTTPStatusError as e:
+                logger.warning(
+                    "signals_compute_skipped company_id=%s status=%s %s",
+                    company_id,
+                    e.response.status_code,
+                    e.response.text[:200] if e.response.text else "",
+                )
+            except Exception as e:
+                logger.warning("signals_compute_skipped company_id=%s error=%s", company_id, e)
 
     def _persist_assessment(self, company_id: str) -> Optional[dict[str, Any]]:
         """

@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, List, Tuple
 
@@ -307,17 +308,34 @@ RECENCY_DAYS_FULL_WEIGHT = 730  # 2 years
 CURRENT_EMPLOYEE_MULTIPLIER = 1.2
 
 
+@dataclass
+class CultureScoreResult:
+    """Result of Glassdoor culture scoring with component breakdown and matched keywords."""
+
+    overall: float
+    confidence: float
+    evidence_count: int
+    component_scores: dict[str, float]  # innovation, data_driven, ai_awareness, change_readiness
+    keywords_matched: dict[str, list[str]]  # per-category lists of keywords that appeared
+
+
 def _count_keywords_in_text(text: str, keywords: List[str]) -> int:
     """Count how many of the keywords appear in text (case-insensitive)."""
     lower = text.lower()
     return sum(1 for kw in keywords if kw in lower)
 
 
+def _keywords_matched_in_text(text: str, keywords: List[str]) -> List[str]:
+    """Return the subset of keywords that appear in text (case-insensitive)."""
+    lower = text.lower()
+    return [kw for kw in keywords if kw in lower]
+
+
 def compute_culture_score_from_reviews(
     company_id: str,
     ticker: str,
     reviews: List[GlassdoorReview],
-) -> Tuple[float, float, int]:
+) -> CultureScoreResult:
     """
     Score Glassdoor reviews for culture (PDF Task 5.0c).
 
@@ -326,10 +344,30 @@ def compute_culture_score_from_reviews(
     All component scores clamped to [0, 100].
 
     Returns:
-        (raw_score 0-100, confidence 0-1, evidence_count)
+        CultureScoreResult with overall, confidence, evidence_count, component_scores, keywords_matched.
     """
+    empty_components = {
+        "innovation": 50.0,
+        "data_driven": 0.0,
+        "ai_awareness": 0.0,
+        "change_readiness": 50.0,
+    }
+    empty_keywords = {
+        "innovation_positive": [],
+        "innovation_negative": [],
+        "data_driven": [],
+        "ai_awareness": [],
+        "change_positive": [],
+        "change_negative": [],
+    }
     if not reviews:
-        return 50.0, 0.0, 0
+        return CultureScoreResult(
+            overall=50.0,
+            confidence=0.0,
+            evidence_count=0,
+            component_scores=empty_components,
+            keywords_matched=empty_keywords,
+        )
 
     now = datetime.now(timezone.utc)
     total_weight = 0.0
@@ -339,6 +377,12 @@ def compute_culture_score_from_reviews(
     ai_awareness_mentions = 0.0
     change_positive = 0.0
     change_negative = 0.0
+    innovation_pos_matched: set[str] = set()
+    innovation_neg_matched: set[str] = set()
+    data_driven_matched: set[str] = set()
+    ai_awareness_matched: set[str] = set()
+    change_pos_matched: set[str] = set()
+    change_neg_matched: set[str] = set()
 
     for review in reviews:
         text = f"{review.pros} {review.cons} {review.advice_to_management or ''}".lower()
@@ -362,8 +406,28 @@ def compute_culture_score_from_reviews(
         change_positive += weight * _count_keywords_in_text(text, CHANGE_POSITIVE)
         change_negative += weight * _count_keywords_in_text(text, CHANGE_NEGATIVE)
 
+        innovation_pos_matched.update(_keywords_matched_in_text(text, INNOVATION_POSITIVE))
+        innovation_neg_matched.update(_keywords_matched_in_text(text, INNOVATION_NEGATIVE))
+        data_driven_matched.update(_keywords_matched_in_text(text, DATA_DRIVEN_KEYWORDS))
+        ai_awareness_matched.update(_keywords_matched_in_text(text, AI_AWARENESS_KEYWORDS))
+        change_pos_matched.update(_keywords_matched_in_text(text, CHANGE_POSITIVE))
+        change_neg_matched.update(_keywords_matched_in_text(text, CHANGE_NEGATIVE))
+
     if total_weight <= 0:
-        return 50.0, 0.0, len(reviews)
+        return CultureScoreResult(
+            overall=50.0,
+            confidence=min(0.9, 0.3 + len(reviews) / 50.0),
+            evidence_count=len(reviews),
+            component_scores=empty_components,
+            keywords_matched={
+                "innovation_positive": sorted(innovation_pos_matched),
+                "innovation_negative": sorted(innovation_neg_matched),
+                "data_driven": sorted(data_driven_matched),
+                "ai_awareness": sorted(ai_awareness_matched),
+                "change_positive": sorted(change_pos_matched),
+                "change_negative": sorted(change_neg_matched),
+            },
+        )
 
     # Component scores (0-100)
     innovation = (innovation_positive - innovation_negative) / total_weight * 50 + 50
@@ -388,7 +452,27 @@ def compute_culture_score_from_reviews(
 
     confidence = min(0.9, 0.3 + len(reviews) / 50.0)
 
-    return round(overall, 2), round(confidence, 4), len(reviews)
+    component_scores = {
+        "innovation": round(innovation, 2),
+        "data_driven": round(data_driven, 2),
+        "ai_awareness": round(ai_awareness, 2),
+        "change_readiness": round(change_readiness, 2),
+    }
+    keywords_matched = {
+        "innovation_positive": sorted(innovation_pos_matched),
+        "innovation_negative": sorted(innovation_neg_matched),
+        "data_driven": sorted(data_driven_matched),
+        "ai_awareness": sorted(ai_awareness_matched),
+        "change_positive": sorted(change_pos_matched),
+        "change_negative": sorted(change_neg_matched),
+    }
+    return CultureScoreResult(
+        overall=round(overall, 2),
+        confidence=round(confidence, 4),
+        evidence_count=len(reviews),
+        component_scores=component_scores,
+        keywords_matched=keywords_matched,
+    )
 
 
 def _fetch_reviews_via_rapidapi(

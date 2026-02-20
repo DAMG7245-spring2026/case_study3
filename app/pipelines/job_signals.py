@@ -110,7 +110,7 @@ class JobSignalCollector:
             url = "https://serpapi.com/search.json"
             params = {
                 "engine": "google_jobs",
-                "q": f"{company_name} jobs",
+                "q": f"{company_name} AI jobs",
                 "api_key": api_key,
             }
             r = self.client.get(url, params=params)
@@ -267,7 +267,7 @@ class JobSignalCollector:
         try:
             kwargs = {
                 "site_name": sites,
-                "search_term": f"{company_name} jobs",
+                "search_term": f"{company_name} AI jobs",
                 "location": location,
                 "results_wanted": results_wanted,
                 "hours_old": 168,

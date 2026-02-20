@@ -13,6 +13,7 @@ from streamlit_ui.components.api_client import (
     get_signal_formulas,
     compute_signals,
     get_company_signal_summary,
+    put_raw_glassdoor_reviews,
 )
 from streamlit_ui.utils.config import get_api_url
 
@@ -185,6 +186,49 @@ if company_options:
                 st.error(f"Compute failed: {e}")
 else:
     st.caption("Add at least one company (Companies page) to use compute from existing data.")
+
+# --- Import Glassdoor reviews (JSON) ---
+st.subheader("Import Glassdoor reviews (JSON)")
+st.caption("Store pre-fetched Glassdoor review JSON for a company. Use a file (e.g. data/NVDA.json) or paste JSON. Then run Compute for glassdoor_reviews above.")
+if company_options:
+    import json as _json
+    imp_labels = [x[0] for x in company_options]
+    imp_ids = [x[1] for x in company_options]
+    imp_sel_idx = st.selectbox(
+        "Company",
+        range(len(imp_labels)),
+        format_func=lambda i: imp_labels[i],
+        key="import_glassdoor_company",
+    )
+    file_upload = st.file_uploader("Upload JSON file", type=["json"], key="import_glassdoor_file")
+    json_paste = st.text_area(
+        "Or paste JSON (list of reviews or object with 'reviews' key)",
+        height=120,
+        placeholder='[{"review_id": "...", "rating": 4, "pros": "...", "review_date": "2024-01-15T00:00:00Z", ...}]',
+        key="import_glassdoor_paste",
+    )
+    if st.button("Store reviews", key="import_glassdoor_btn"):
+        payload = None
+        if file_upload:
+            try:
+                payload = _json.load(file_upload)
+            except _json.JSONDecodeError as e:
+                st.error(f"Invalid JSON in file: {e}")
+        elif json_paste and json_paste.strip():
+            try:
+                payload = _json.loads(json_paste.strip())
+            except _json.JSONDecodeError as e:
+                st.error(f"Invalid JSON: {e}")
+        if payload is not None:
+            try:
+                company_id = imp_ids[imp_sel_idx]
+                company_label = imp_labels[imp_sel_idx]
+                result = put_raw_glassdoor_reviews(company_id, payload)
+                st.success(f"Stored {result.get('stored', 0)} reviews for {company_label}. {result.get('message', '')}")
+            except Exception as e:
+                st.error(f"Failed to store reviews: {e}")
+else:
+    st.caption("Add at least one company (Companies page) to import Glassdoor reviews.")
 
 # --- Formula and Compute (when we have a company from collect) ---
 last_company_id = st.session_state.get("signals_last_company_id")

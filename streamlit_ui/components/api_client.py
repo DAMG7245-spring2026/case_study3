@@ -401,6 +401,22 @@ def compute_signals(
             c.close()
 
 
+def put_raw_glassdoor_reviews(
+    company_id: str | UUID,
+    payload: list[Any] | dict[str, Any],
+    client: Optional[httpx.Client] = None,
+) -> dict[str, Any]:
+    """PUT /api/v1/companies/{company_id}/raw/glassdoor_reviews. payload: list of review objects, or dict with 'reviews' key. Returns { stored, company_id, message }."""
+    c = client or get_client()
+    try:
+        r = c.put(f"/api/v1/companies/{company_id}/raw/glassdoor_reviews", json=payload)
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if not client:
+            c.close()
+
+
 def get_signals(
     client: Optional[httpx.Client] = None,
     page: int = 1,
