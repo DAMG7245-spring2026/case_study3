@@ -21,6 +21,8 @@ from app.pipelines.evidence_mapper.evidence_mapping_table import (
     EvidenceScore,
     SIGNAL_TO_DIMENSION_MAP,
     SignalSource,
+    build_signal_to_dimension_map,
+    compute_weights_hash,
 )
 from app.pipelines.evidence_mapper.rubric_scorer import RubricScorer
 from app.services.snowflake import SnowflakeService
@@ -50,7 +52,13 @@ class DimensionScoringPipeline:
 
     def __init__(self, db: SnowflakeService) -> None:
         self.db = db
-        self.mapper = EvidenceMapper()
+        try:
+            rows = db.get_signal_dimension_weights()
+        except Exception:
+            rows = []
+        self._signal_map = build_signal_to_dimension_map(rows)
+        self._weights_hash = compute_weights_hash(self._signal_map)
+        self.mapper = EvidenceMapper(self._signal_map)
         self.rubric = RubricScorer()
 
     def compute_and_store(self, company_id: str) -> list[dict]:
@@ -99,7 +107,7 @@ class DimensionScoringPipeline:
             if source is None:
                 continue
             text = " ".join(contents)
-            primary_dim: Dimension = SIGNAL_TO_DIMENSION_MAP[source].primary_dimension
+            primary_dim: Dimension = self._signal_map[source].primary_dimension
             result = self.rubric.score_dimension(primary_dim.value, text, {})
             evidence_scores.append(
                 EvidenceScore(
@@ -138,6 +146,7 @@ class DimensionScoringPipeline:
                 confidence=conf_val,
                 evidence_count=ev_count,
                 contributing_sources=contributing,
+                weights_hash=self._weights_hash,
             )
             output.append(
                 {
