@@ -83,11 +83,9 @@ class TestAssessmentModels:
         assessment = AssessmentCreate(
             company_id=company_id,
             assessment_type=AssessmentType.SCREENING,
-            primary_assessor="John Doe"
         )
         assert assessment.company_id == company_id
         assert assessment.assessment_type == AssessmentType.SCREENING
-        assert assessment.primary_assessor == "John Doe"
     
     def test_assessment_create_default_date(self):
         """Test default assessment date is set."""
@@ -149,7 +147,7 @@ class TestDimensionScoreModels:
     def test_dimension_score_valid(self):
         """Test valid dimension score creation."""
         score = DimensionScoreCreate(
-            assessment_id=uuid4(),
+            company_id=uuid4(),
             dimension=Dimension.DATA_INFRASTRUCTURE,
             score=85.5,
             confidence=0.9,
@@ -157,26 +155,26 @@ class TestDimensionScoreModels:
         )
         assert score.score == 85.5
         assert score.dimension == Dimension.DATA_INFRASTRUCTURE
-    
+
     def test_dimension_score_default_weight(self):
         """Test default weight is set based on dimension."""
         score = DimensionScoreCreate(
-            assessment_id=uuid4(),
+            company_id=uuid4(),
             dimension=Dimension.DATA_INFRASTRUCTURE,
             score=75.0
         )
-        assert score.weight == DIMENSION_WEIGHTS[Dimension.DATA_INFRASTRUCTURE]
-        assert score.weight == 0.25
-    
+        assert score.total_weight == DIMENSION_WEIGHTS[Dimension.DATA_INFRASTRUCTURE]
+        assert score.total_weight == 0.25
+
     def test_dimension_score_custom_weight(self):
         """Test custom weight overrides default."""
         score = DimensionScoreCreate(
-            assessment_id=uuid4(),
+            company_id=uuid4(),
             dimension=Dimension.DATA_INFRASTRUCTURE,
             score=75.0,
-            weight=0.30
+            total_weight=0.30
         )
-        assert score.weight == 0.30
+        assert score.total_weight == 0.30
     
     def test_dimension_score_invalid_score_range(self):
         """Test validation error for out-of-range score."""

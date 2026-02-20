@@ -86,19 +86,19 @@ def sample_assessment_data(sample_company_id):
 
 
 @pytest.fixture
-def sample_dimension_scores(sample_assessment_id):
+def sample_dimension_scores(sample_company_id):
     """Sample dimension scores data."""
     return {
         "scores": [
             {
-                "assessment_id": sample_assessment_id,
+                "company_id": sample_company_id,
                 "dimension": "data_infrastructure",
                 "score": 75.5,
                 "confidence": 0.85,
                 "evidence_count": 5
             },
             {
-                "assessment_id": sample_assessment_id,
+                "company_id": sample_company_id,
                 "dimension": "ai_governance",
                 "score": 68.0,
                 "confidence": 0.80,

@@ -41,17 +41,40 @@ class TestCompanyEndpoints:
     
     def test_create_company_success(self, client, mock_snowflake, sample_company_data):
         """Test successful company creation."""
-        # Mock industry exists check
-        mock_snowflake.execute_one.return_value = {"id": sample_company_data["industry_id"]}
+        from datetime import datetime, timezone
+        company_id = str(uuid4())
+        now = datetime.now(timezone.utc)
+        # Router calls execute_one 3 times:
+        # 1) ticker duplicate check -> None (no duplicate)
+        # 2) industry exists check -> {"id": ...}
+        # 3) SELECT after INSERT -> full company row
+        mock_snowflake.execute_one.side_effect = [
+            None,  # no duplicate ticker
+            {"id": sample_company_data["industry_id"]},  # industry exists
+            {  # full company row after insert
+                "id": company_id,
+                "name": sample_company_data["name"],
+                "ticker": sample_company_data["ticker"].upper(),
+                "industry_id": sample_company_data["industry_id"],
+                "position_factor": sample_company_data.get("position_factor", 0.0),
+                "domain": None,
+                "careers_url": None,
+                "news_url": None,
+                "leadership_url": None,
+                "glassdoor_company_id": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ]
         mock_snowflake.execute_write.return_value = 1
-        
+
         with patch("app.routers.companies.get_snowflake_service", return_value=mock_snowflake):
             response = client.post("/api/v1/companies", json=sample_company_data)
-        
+
         assert response.status_code == 201
         data = response.json()
         assert data["name"] == sample_company_data["name"]
-        assert data["ticker"] == sample_company_data["ticker"]
+        assert data["ticker"] == sample_company_data["ticker"].upper()
         assert "id" in data
     
     def test_create_company_invalid_industry(self, client, mock_snowflake, sample_company_data):
@@ -137,20 +160,21 @@ class TestAssessmentEndpoints:
     def test_update_assessment_status_valid_transition(self, client, mock_snowflake, mock_redis):
         """Test valid status transition."""
         assessment_id = str(uuid4())
+        now = datetime.now(timezone.utc)
         mock_snowflake.execute_one.side_effect = [
-            {"status": "draft"},  # Current status
-            {  # Updated assessment
+            {"status": "draft"},  # Current status check
+            {  # Full row returned by get_assessment after update
                 "id": assessment_id,
                 "company_id": str(uuid4()),
                 "assessment_type": "screening",
-                "assessment_date": datetime.now(timezone.utc),
+                "assessment_date": now,
                 "status": "in_progress",
-                "primary_assessor": None,
-                "secondary_assessor": None,
+                "h_r_score": None,
+                "synergy": None,
                 "v_r_score": None,
                 "confidence_lower": None,
                 "confidence_upper": None,
-                "created_at": datetime.now(timezone.utc)
+                "created_at": now,
             }
         ]
         
@@ -189,8 +213,9 @@ class TestDimensionScoreEndpoints:
     ):
         """Test adding dimension scores to assessment."""
         assessment_id = str(uuid4())
+        company_id = str(uuid4())
         mock_snowflake.execute_one.side_effect = [
-            {"id": assessment_id},  # Assessment exists
+            {"id": assessment_id, "company_id": company_id},  # Assessment exists with company_id
             None, None  # No existing scores for dimensions
         ]
         mock_snowflake.execute_write.return_value = 1
@@ -211,17 +236,18 @@ class TestDimensionScoreEndpoints:
     ):
         """Test adding duplicate dimension score fails."""
         assessment_id = str(uuid4())
+        company_id = str(uuid4())
         mock_snowflake.execute_one.side_effect = [
-            {"id": assessment_id},  # Assessment exists
+            {"id": assessment_id, "company_id": company_id},  # Assessment exists
             {"id": str(uuid4())}  # Score already exists
         ]
-        
+
         with patch("app.routers.assessments.get_snowflake_service", return_value=mock_snowflake):
             response = client.post(
                 f"/api/v1/assessments/{assessment_id}/scores",
                 json={
                     "scores": [{
-                        "assessment_id": assessment_id,
+                        "company_id": company_id,
                         "dimension": "data_infrastructure",
                         "score": 75.0
                     }]

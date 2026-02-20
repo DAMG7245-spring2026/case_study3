@@ -5,7 +5,9 @@ AI Readiness Assessment Platform for Private Equity Portfolio Companies with aut
 ## Links
 
 - FastAPI public URL: http://35.93.9.162:8000/docs
-- Demo video link: https://www.youtube.com/watch?v=ATQqYbEYGnM
+- Demo video link: https://youtu.be/xpflYeUJdp0
+- google colab doc: https://codelabs-preview.appspot.com/?file_id=1ObtcVTcTSMoM_9oB4PaTuLT-OJgGIZe-5PG6L3d2urw
+- google docs: 
 
 ## 🎯 Project Overview
 
@@ -18,7 +20,7 @@ This platform automates the collection and analysis of evidence for AI readiness
 
 ### System Architecture
 
-![Case Study 2 Architecture](docs/damg_case_study_arch.png)
+![Case Study 2 Architecture](docs/arch.png)
 
 ### Target Companies (10)
 
@@ -401,19 +403,76 @@ GET /health
 
 ## 🧪 Testing
 
+### Run Tests
+
 ```bash
 # Run all tests
 poetry run pytest
 
-# Run with coverage
+# Run with coverage report
 poetry run pytest --cov=app --cov-report=term-missing
 
 # Run specific test file
-poetry run pytest tests/test_document_chunker.py -v
+poetry run pytest tests/test_scores_coverage.py -v
 
 # Run tests matching pattern
-poetry run pytest -k "test_chunk" -v
+poetry run pytest -k "assessment" -v
 ```
+
+
+### Coverage Summary (261 tests — all passing)
+
+#### Target Modules
+
+| Test File | Module | Statements | Coverage |
+|---|---|---|---|
+| `test_assessments_coverage.py` | `app/routers/assessments.py` | 102 | **98%** |
+| `test_sec_edgar_coverage.py` | `app/pipelines/sec_edgar.py` | 113 | **97%** |
+| `test_scores_coverage.py` | `app/routers/scores.py` | 203 | **89%** |
+| `test_job_signals_coverage.py` | `app/pipelines/job_signals.py` | 208 | **82%** |
+
+#### `test_scores_coverage.py` — Detailed Breakdown
+
+| Class | Tests | Endpoints Covered |
+|---|---|---|
+| `TestUpdateDimensionScore` | 4 | `PUT /api/v1/scores/{score_id}` |
+| `TestGetDimensionScores` | 4 | `GET /api/v1/scores/companies/{id}/dimension-scores` |
+| `TestComputeDimensionScores` | 2 | `POST /api/v1/scores/companies/{id}/compute-dimension-scores` |
+| `TestGetOrgAir` | 2 | `GET /api/v1/scores/companies/{id}/org-air` |
+| `TestListOrgAir` | 3 | `GET /api/v1/scores/org-air` |
+| `TestComputeOrgAir` | 3 | `POST /api/v1/scores/companies/{id}/compute-org-air` |
+| `TestComputeAll` | 4 | `POST /api/v1/scores/companies/{id}/score-company` |
+| `TestScoreByTicker` | 3 | `POST /api/v1/scores/score-by-ticker` |
+
+#### `test_assessments_coverage.py` — Detailed Breakdown
+
+| Class | Tests | Endpoints Covered |
+|---|---|---|
+| `TestListAssessments` | 6 | `GET /api/v1/assessments` (empty, filtered by company/status/type, with scores) |
+| `TestGetAssessment` | 3 | `GET /api/v1/assessments/{id}` (cache miss, 404, with scores) |
+| `TestUpdateAssessmentStatus` | 4 | `PATCH /api/v1/assessments/{id}/status` (valid/invalid transitions, 404) |
+| `TestDimensionScoresViaAssessment` | 4 | `GET/POST /api/v1/assessments/{id}/scores` |
+
+#### `test_job_signals_coverage.py` — Detailed Breakdown
+
+| Class | Tests | Logic Covered |
+|---|---|---|
+| `TestPostedWithinDays` | 18 | All date string formats (`N days ago`, `N hours ago`, `N weeks ago`, `yesterday`, `month`, `year`, `N+ days`) |
+| `TestClassifyPosting` | 5 | AI keyword detection, skill extraction |
+| `TestIsTechJob` | 6 | Tech job title classification |
+| `TestDedupePostings` | 5 | Title deduplication (case-insensitive, whitespace normalization) |
+| `TestAnalyzeJobPostings` | 5 | Score calculation, `ExternalSignalCreate` output |
+| `TestFetchPostings` | 8 | No API key, HTTP errors, date field fallbacks, empty title/desc skip |
+| `TestFetchFromCareersPage` | 7 | Empty URL, non-200 status, HTML parsing, short title filter |
+| `TestFetchFromJobspy` | 3 | ImportError fallback, exception handling |
+| `TestCreateSamplePostings` | 3 | Low / medium / high AI focus |
+
+#### `test_sec_edgar_coverage.py` — Detailed Breakdown
+
+| Class | Tests | Logic Covered |
+|---|---|---|
+| `TestRateLimiter` | 7 | Init, `wait()` (sleep / no-sleep), `wait_async()` (sleep / no-sleep) |
+| `TestSECEdgarPipeline` | 15 | Init, download success/empty, retry on rate-limit, all-retries-fail, filing type mapping (DEF-14A→DEFA14A), primary-document collection, `get_filing_path`, `list_downloaded_filings`, `download_all_companies`, async download |
 
 ---
 
@@ -525,38 +584,133 @@ case_study2/
 └── README.md
 ```
 
+## 📐 Case Study 3: Org-AI-R Scoring Framework
+
+Case Study 3 extends the evidence collection pipeline (CS2) with a full **Org-AI-R scoring framework** — computing V^R, H^R, Synergy, and composite Org-AI-R scores with SEM-based confidence intervals, new signal sources (Glassdoor / board composition), a Streamlit scoring dashboard, and an Airflow orchestration DAG.
+
+### Scoring Formula
+
+```
+Org-AI-R = (1 - β) × [α × V^R + (1 - α) × H^R] + β × Synergy
+
+Where:
+  α = 0.60  (V^R weight)
+  β = 0.12  (Synergy weight)
+
+  V^R = WeightedMean(7 dimensions) × PenaltyFactor × TalentRiskAdj
+  H^R = H^R_base × (1 + 0.15 × PositionFactor)
+  Synergy = (V^R × H^R / 100) × Alignment × TimingFactor
+  CI = score ± z × SEM  (Spearman-Brown reliability)
+```
+
+**Seven AI-Readiness Dimensions:**
+
+| Dimension |
+|---|
+| Data Infrastructure 
+| AI Governance
+| Technology Stack
+| Talent & Skills
+| Leadership Vision 
+| Use Case Portfolio
+| Culture & Change
+
+### CS3 New Modules
+
+#### 1. Scoring Engine (`app/scoring/`)
+
+Financial-grade scoring framework using `Decimal` arithmetic throughout:
+
+| Module | Formula / Purpose |
+|---|---|
+| `utils.py` | Decimal conversion, clamp, weighted mean/std-dev, coefficient of variation |
+| `vr_calculator.py` | **V^R** (Idiosyncratic Readiness): weighted 7-dimension mean with CV penalty and talent-risk adjustment |
+| `talent_concentration.py` | **TC** (Talent Concentration / key-person risk): leadership ratio, team size, skill diversity, Glassdoor mentions |
+| `position_factor.py` | **PF** (Position Factor): company position vs. sector peers using V^R deviation + market-cap percentile |
+| `hr_calculator.py` | **H^R** (Systematic Opportunity): `H^R_base * (1 + 0.15 * PF)`, sector baselines |
+| `synergy_calculator.py` | **Synergy**: `(V^R * H^R / 100) * alignment * timing_factor` |
+| `confidence.py` | SEM-based confidence intervals using Spearman-Brown reliability (scipy-free `erfinv` / `norm_ppf`) |
+| `org_air_calculator.py` | **Org-AI-R** composite: `(1-β)[α*V^R + (1-α)*H^R] + β*Synergy` with CI attachment |
+| `integration_service.py` | Pipeline integration service orchestrating end-to-end scoring via API calls |
+
+#### 2. Evidence Mapper (`app/pipelines/evidence_mapper/`)
+
+Maps raw evidence signals to the 7 AI-readiness dimensions with weighted aggregation:
+
+| Module | Purpose |
+|---|---|
+| `evidence_mapping_table.py` | Signal-to-dimension weight table (9 sources -> 7 dimensions), `build_signal_to_dimension_map()` for DB-driven weights, `compute_weights_hash()` for staleness detection |
+| `evidence_mapper.py` | `EvidenceMapper`: weighted aggregation of evidence scores per dimension, coverage report generation |
+| `rubric_scorer.py` | Rubric-based dimension scoring from evidence text |
+| `score_rubric.py` | Score level definitions and rubric criteria |
+
+#### 3. New Signal Sources
+
+| Module | Signal |
+|---|---|
+| `app/pipelines/glassdoor_collector.py` | Glassdoor reviews -> culture/talent signals |
+| `app/pipelines/board_analyzer.py` | Board composition -> AI governance signals |
+| `scripts/load_glassdoor_from_file.py` | Bulk loader for Glassdoor data |
+
+#### 4. Scoring Pipelines (`app/pipelines/`)
+
+| Module | Purpose |
+|---|---|
+| `dimension_scorer.py` | Runs evidence mapper + rubric scorer to produce per-dimension scores |
+| `org_air_pipeline.py` | End-to-end pipeline: dimensions -> V^R -> PF -> H^R -> Synergy -> Org-AI-R |
+
+#### 5. Scoring API (`app/routers/scores.py`)
+
+New endpoints for triggering and retrieving Org-AI-R scores:
+- `PUT /api/v1/scores/{id}` -- update individual dimension score
+- Score-by-ticker and full pipeline trigger endpoints
+- Integration with all scoring calculators
+
+#### 6. Streamlit Scoring Dashboard (`streamlit_ui/`)
+
+Multi-page scoring dashboard (run with `poetry run streamlit run streamlit_ui/main.py`):
+
+| Page | Function |
+|---|---|
+| `5_Scoring_Dashboard.py` | Overview of portfolio Org-AI-R scores |
+| `6_Scoring_Evidence.py` | Evidence sources and coverage per company |
+| `7_Scoring_Dimensions.py` | 7-dimension breakdown with radar charts |
+| `8_Scoring_Portfolio.py` | Portfolio-level comparison and ranking |
+| `9_Scoring_Audit.py` | Full audit trail (parameters, CI, sub-scores) |
+| `10_Scoring_Calculator.py` | Interactive scoring calculator |
+
+#### 7. Airflow Orchestration (`docker/airflow/dags/`)
+
+`org_air_pipeline_dag.py` -- DAG that orchestrates the full pipeline:
+1. Trigger document collection for all companies
+2. Trigger signal collection (all categories including Glassdoor)
+3. Compute signals per company
+4. Run score-by-ticker for each company
+
+
+
 ---
 
 ## 👥 Team Member Contributions
 
-| Team Member      | Contribution             | Key Components                                                                |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
-| **WEI CHENG TU** | SEC EDGAR Pipeline       | SEC downloader, document parser, section extraction, semantic chunking        |
-| **Nisarg Sheth** | External Signal Pipeline | Job signals, tech stack, patent signals, leadership signals, scoring logic    |
-| **YU TZU LI**    | API Endpoints            | FastAPI routers, background tasks, evidence collection API, database services |
 
 ### Individual Responsibilities
 
 **WEI CHENG TU:**
 
-- Implemented `SECEdgarPipeline` for automated filing downloads
-- Built `DocumentParser` with iXBRL/XBRL noise removal
-- Designed section-aware extraction for 10-K, 10-Q, 8-K forms
-- Developed `SemanticChunker` with 1000-word overlapping segments
-- Created Alembic migrations for `documents` and `document_chunks` tables
+- Transfer the signals and SEC file into score in 5 individual dimensions
+- Evidence-to-Dimension Mapper
+- Rubric-Based Scorer: get scores in 7 specific dimension for a company
 
 **Nisarg Sheth:**
 
-- Built `JobSignalCollector` with SerpAPI and careers page integration
-- Implemented `DigitalPresenceCollector` (BuiltWith + company news) for digital presence signals
-- Developed `PatentSignalCollector` with Lens.org API
-- Created `LeadershipSignalCollector` with website scraping
-- Designed normalized scoring (0-100) and confidence metrics (0-1)
-- Implemented composite score calculation with category weights
+- Gather information for 2 dimensions that are new in this case study
+- Glassdoor Culture Collector: for culture dimension
+- Board Composition Analyzer: for AI Governance dimension
+- Streamlit UI
 
 **YU TZU LI:**
+- Scoring calculator pipeline and API Endpoints
+- Property-Based Tests
 
-- Design high-level system architecture
-- Created Snowflake service layer for database operations
-- Developed S3 storage service for raw filing archival
-- Integrated all pipeline components into unified API
+---

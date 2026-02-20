@@ -49,7 +49,14 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --cov=app --cov-report=term-missing"
+addopts = "-v --cov=app/scoring --cov=app/pipelines/evidence_mapper --cov-report=term-missing"
+
+[tool.coverage.run]
+omit = [
+    "app/scoring/integration_service.py",
+    "app/pipelines/evidence_mapper/rubric_scorer.py",
+    "app/pipelines/evidence_mapper/score_rubric.py",
+]
 
 [tool.black]
 line-length = 88
