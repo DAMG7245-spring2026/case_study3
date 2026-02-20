@@ -1,5 +1,4 @@
 # docker-compose.yml for PE Org-AI-R Platform
-version: '3.8'
 
 services:
   api:
@@ -83,8 +82,86 @@ services:
       retries: 3
     command: redis-server --appendonly yes
 
+  # --- Airflow ---
+  airflow-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    networks:
+      - pe-org-air-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    image: apache/airflow:2.10.0
+    platform: linux/amd64
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: 50000
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --role Admin --username admin --email admin@example.com --firstname Admin --lastname User --password admin || true
+    networks:
+      - pe-org-air-network
+    restart: "no"
+
+  airflow-webserver:
+    image: apache/airflow:2.10.0
+    platform: linux/amd64
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: 50000
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    ports:
+      - "8080:8080"
+    command: webserver
+    networks:
+      - pe-org-air-network
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.0
+    platform: linux/amd64
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: 50000
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    command: scheduler
+    networks:
+      - pe-org-air-network
+
 volumes:
   redis_data:
+    driver: local
+  airflow_db_data:
     driver: local
 
 networks:
