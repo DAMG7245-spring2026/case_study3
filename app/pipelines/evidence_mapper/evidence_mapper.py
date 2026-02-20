@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from app.models.enums import Dimension
 from app.pipelines.evidence_mapper.evidence_mapping_table import (
@@ -7,13 +7,14 @@ from app.pipelines.evidence_mapper.evidence_mapping_table import (
     EvidenceScore,
     DimensionScore,
     DimensionMapping,
+    SignalSource,
 )
 
 
 class EvidenceMapper:
 
-    def __init__(self):
-        self.evidence_mapper = SIGNAL_TO_DIMENSION_MAP
+    def __init__(self, signal_map: Optional[Dict[SignalSource, DimensionMapping]] = None):
+        self.evidence_mapper = signal_map if signal_map is not None else SIGNAL_TO_DIMENSION_MAP
 
     def map_evidence_to_dimensions(
         self, evidence_scores: List[EvidenceScore]

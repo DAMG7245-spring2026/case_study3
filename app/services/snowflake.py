@@ -697,6 +697,7 @@ class SnowflakeService:
         confidence: float,
         evidence_count: int,
         contributing_sources: list[str],
+        weights_hash: Optional[str] = None,
     ) -> None:
         """Insert or update a dimension score row for a company."""
         sources_json = json.dumps(contributing_sources)
@@ -709,23 +710,78 @@ class SnowflakeService:
                 """
                 UPDATE dimension_scores
                 SET score = %s, total_weight = %s, confidence = %s,
-                    evidence_count = %s, contributing_sources = PARSE_JSON(%s)
+                    evidence_count = %s, contributing_sources = PARSE_JSON(%s),
+                    weights_hash = %s
                 WHERE company_id = %s AND dimension = %s
                 """,
                 (score, total_weight, confidence, evidence_count, sources_json,
-                 company_id, dimension),
+                 weights_hash, company_id, dimension),
             )
         else:
             self.execute_write(
                 """
                 INSERT INTO dimension_scores
                     (id, company_id, dimension, score, total_weight,
-                     confidence, evidence_count, contributing_sources, created_at)
-                SELECT uuid_string(), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+                     confidence, evidence_count, contributing_sources, weights_hash, created_at)
+                SELECT uuid_string(), %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, CURRENT_TIMESTAMP()
                 """,
                 (company_id, dimension, score, total_weight, confidence,
-                 evidence_count, sources_json),
+                 evidence_count, sources_json, weights_hash),
             )
+
+    def get_signal_dimension_weights(self) -> list[dict[str, Any]]:
+        """Fetch all rows from signal_dimension_weights ordered by source, primary first."""
+        return self.execute_query(
+            "SELECT signal_source, dimension, weight, is_primary, reliability, updated_at, updated_by "
+            "FROM signal_dimension_weights ORDER BY signal_source, is_primary DESC"
+        )
+
+    def upsert_signal_dimension_weight(
+        self,
+        signal_source: str,
+        dimension: str,
+        weight: float,
+        is_primary: bool,
+        reliability: float,
+        updated_by: str = "system",
+    ) -> None:
+        """Insert or update a single row in signal_dimension_weights."""
+        existing = self.execute_one(
+            "SELECT 1 FROM signal_dimension_weights WHERE signal_source = %s AND dimension = %s",
+            (signal_source, dimension),
+        )
+        now = datetime.now(timezone.utc)
+        if existing:
+            self.execute_write(
+                """
+                UPDATE signal_dimension_weights
+                SET weight = %s, is_primary = %s, reliability = %s,
+                    updated_at = %s, updated_by = %s
+                WHERE signal_source = %s AND dimension = %s
+                """,
+                (weight, is_primary, reliability, now, updated_by, signal_source, dimension),
+            )
+        else:
+            self.execute_write(
+                """
+                INSERT INTO signal_dimension_weights
+                    (signal_source, dimension, weight, is_primary, reliability, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (signal_source, dimension, weight, is_primary, reliability, now, updated_by),
+            )
+
+    def get_stale_dimension_score_companies(self, current_weights_hash: str) -> list[str]:
+        """Return distinct company_ids whose dimension_scores were computed with a different hash."""
+        rows = self.execute_query(
+            """
+            SELECT DISTINCT company_id
+            FROM dimension_scores
+            WHERE weights_hash IS NULL OR weights_hash != %s
+            """,
+            (current_weights_hash,),
+        )
+        return [r["company_id"] for r in rows]
 
     def get_company_by_id(self, company_id: UUID) -> Optional[dict[str, Any]]:
         """Get company by ID (returns full row including URL columns and glassdoor_company_id)."""
@@ -743,7 +799,26 @@ class SnowflakeService:
         return {r["dimension"]: float(r["score"]) for r in rows}
 
     def get_evidence_count(self, company_id: str) -> int:
-        """Total evidence items (signals + chunks) for CI width calculation."""
+        """Total evidence items for CI width calculation.
+
+        Primary: sum of evidence_count across all dimension_scores for the company.
+        This matches the per-dimension evidence used during scoring (a source that
+        contributes to N dimensions is counted N times, consistent with what the
+        DimensionScoringPipeline persisted).
+
+        Fallback: raw COUNT(*) of external_signals + document_chunks, used only
+        when no dimension scores exist yet (e.g. before first pipeline run).
+        """
+        dim_row = self.execute_one(
+            "SELECT COALESCE(SUM(evidence_count), 0) AS cnt "
+            "FROM dimension_scores WHERE company_id = %s",
+            (company_id,),
+        )
+        total = int((dim_row or {}).get("cnt", 0))
+        if total > 0:
+            return total
+
+        # Fallback: no dimension scores yet — count raw evidence items
         sig_row = self.execute_one(
             "SELECT COUNT(*) AS cnt FROM external_signals WHERE company_id = %s",
             (company_id,),
@@ -754,9 +829,7 @@ class SnowflakeService:
                WHERE d.company_id = %s""",
             (company_id,),
         )
-        sig_cnt   = int((sig_row or {}).get("cnt", 0))
-        chunk_cnt = int((chunk_row or {}).get("cnt", 0))
-        return sig_cnt + chunk_cnt
+        return int((sig_row or {}).get("cnt", 0)) + int((chunk_row or {}).get("cnt", 0))
 
     def get_job_raw_payload(self, company_id: str) -> list[dict]:
         """Fetch raw technology_hiring job postings for talent-concentration calc."""
@@ -784,10 +857,11 @@ class SnowflakeService:
         confidence_upper: float,
         position_factor: float,
         talent_concentration: float,
+        evidence_count: int = 0,
     ) -> str:
         """Insert or update assessment scores for a company.
 
-        Stores V^R, H^R, Synergy, Org-AI-R, and CI bounds.
+        Stores V^R, H^R, Synergy, Org-AI-R, CI bounds, and evidence_count.
         Returns the assessment id.
         (assessment_type and status are ignored; columns were dropped in migration 010.)
         """
@@ -805,17 +879,19 @@ class SnowflakeService:
                    SET v_r_score = %s, h_r_score = %s, synergy = %s,
                        org_ai_r = %s,
                        confidence_lower = %s, confidence_upper = %s,
-                       position_factor = %s, talent_concentration = %s
+                       position_factor = %s, talent_concentration = %s,
+                       evidence_count = %s
                    WHERE id = %s""",
                 (v_r_score, round(h_r_score, 2), round(synergy, 2),
                  round(org_air_score, 2),
                  confidence_lower, confidence_upper,
-                 round(position_factor, 4), round(talent_concentration, 4), aid),
+                 round(position_factor, 4), round(talent_concentration, 4),
+                 evidence_count, aid),
             )
             logger.info(
-                "assessment_updated company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f",
+                "assessment_updated company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f ec=%d",
                 company_id, org_air_score, v_r_score, h_r_score, synergy,
-                position_factor, talent_concentration,
+                position_factor, talent_concentration, evidence_count,
             )
         else:
             aid = str(uuid4())
@@ -824,17 +900,19 @@ class SnowflakeService:
                        (id, company_id, assessment_date,
                         v_r_score, h_r_score, synergy, org_ai_r,
                         confidence_lower, confidence_upper,
-                        position_factor, talent_concentration, created_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        position_factor, talent_concentration,
+                        evidence_count, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (aid, company_id, date.today(),
                  v_r_score, round(h_r_score, 2), round(synergy, 2), round(org_air_score, 2),
                  confidence_lower, confidence_upper,
-                 round(position_factor, 4), round(talent_concentration, 4), now),
+                 round(position_factor, 4), round(talent_concentration, 4),
+                 evidence_count, now),
             )
             logger.info(
-                "assessment_created company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f",
+                "assessment_created company_id=%s score=%.2f vr=%.2f hr=%.2f syn=%.2f pf=%.4f tc=%.4f ec=%d",
                 company_id, org_air_score, v_r_score, h_r_score, synergy,
-                position_factor, talent_concentration,
+                position_factor, talent_concentration, evidence_count,
             )
         return aid
 

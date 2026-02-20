@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from enum import Enum
@@ -140,3 +142,81 @@ SIGNAL_TO_DIMENSION_MAP: Dict[SignalSource, DimensionMapping] = {
         reliability=Decimal("0.85"),
     ),
 }
+
+
+def build_signal_to_dimension_map(
+    rows: list[dict],
+) -> Dict[SignalSource, DimensionMapping]:
+    """Build a signal→dimension map from DB rows.
+
+    Each row must have: signal_source, dimension, weight, is_primary, reliability.
+    Falls back to SIGNAL_TO_DIMENSION_MAP if rows is empty (e.g. DB unavailable).
+    """
+    if not rows:
+        return SIGNAL_TO_DIMENSION_MAP
+
+    # Group rows by signal_source
+    grouped: Dict[str, list[dict]] = {}
+    for row in rows:
+        src = row["signal_source"]
+        grouped.setdefault(src, []).append(row)
+
+    result: Dict[SignalSource, DimensionMapping] = {}
+    for src_str, src_rows in grouped.items():
+        try:
+            source = SignalSource(src_str)
+        except ValueError:
+            continue
+
+        primary_row = next((r for r in src_rows if r["is_primary"]), None)
+        if primary_row is None:
+            continue
+
+        try:
+            primary_dim = Dimension(primary_row["dimension"])
+        except ValueError:
+            continue
+
+        secondary: Dict[Dimension, Decimal] = {}
+        for r in src_rows:
+            if r["is_primary"]:
+                continue
+            try:
+                dim = Dimension(r["dimension"])
+                secondary[dim] = Decimal(str(r["weight"]))
+            except (ValueError, Exception):
+                continue
+
+        result[source] = DimensionMapping(
+            source=source,
+            primary_dimension=primary_dim,
+            primary_weight=Decimal(str(primary_row["weight"])),
+            secondary_mappings=secondary,
+            reliability=Decimal(str(primary_row["reliability"])),
+        )
+
+    # Preserve any sources from the default map that weren't in DB rows
+    for source, mapping in SIGNAL_TO_DIMENSION_MAP.items():
+        if source not in result:
+            result[source] = mapping
+
+    return result
+
+
+def compute_weights_hash(signal_map: Dict[SignalSource, DimensionMapping]) -> str:
+    """Return SHA-256 hex digest of the canonical weight JSON for staleness detection."""
+    canonical: dict = {}
+    for source, mapping in sorted(signal_map.items(), key=lambda kv: kv[0].value):
+        canonical[source.value] = {
+            "primary_dimension": mapping.primary_dimension.value,
+            "primary_weight": str(mapping.primary_weight),
+            "reliability": str(mapping.reliability),
+            "secondary_mappings": {
+                dim.value: str(w)
+                for dim, w in sorted(
+                    mapping.secondary_mappings.items(), key=lambda kv: kv[0].value
+                )
+            },
+        }
+    payload = json.dumps(canonical, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()

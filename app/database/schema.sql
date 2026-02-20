@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS assessments (
     v_r_score DECIMAL(5,2),
     confidence_lower DECIMAL(5,2),
     confidence_upper DECIMAL(5,2),
+    evidence_count INT DEFAULT 0,
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
@@ -57,7 +58,22 @@ CREATE TABLE IF NOT EXISTS dimension_scores (
     confidence DECIMAL(4,3) DEFAULT 0.8,
     evidence_count INT DEFAULT 0,
     contributing_sources VARIANT,
+    weights_hash VARCHAR(64),
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- =====================================================
+-- Signal dimension weights table
+-- =====================================================
+CREATE TABLE IF NOT EXISTS signal_dimension_weights (
+    signal_source  VARCHAR(50)  NOT NULL,
+    dimension      VARCHAR(30)  NOT NULL,
+    weight         DECIMAL(6,4) NOT NULL,
+    is_primary     BOOLEAN      NOT NULL DEFAULT FALSE,
+    reliability    DECIMAL(6,4) NOT NULL DEFAULT 0.80,
+    updated_at     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    updated_by     VARCHAR(100) DEFAULT 'system',
+    PRIMARY KEY (signal_source, dimension)
 );
 
 -- =====================================================
@@ -159,3 +175,55 @@ CREATE TABLE IF NOT EXISTS signal_raw_collections (
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     UNIQUE(company_id, category)
 );
+
+-- =====================================================
+-- Seed data for signal_dimension_weights
+-- =====================================================
+-- One row per (signal_source, dimension) pair from SIGNAL_TO_DIMENSION_MAP
+MERGE INTO signal_dimension_weights AS target
+USING (
+    -- technology_hiring (reliability=0.9)
+    SELECT 'technology_hiring' AS signal_source, 'technology_stack'    AS dimension, 0.7  AS weight, TRUE  AS is_primary, 0.9  AS reliability UNION ALL
+    SELECT 'technology_hiring',                   'talent_skills',                   0.2,             FALSE,              0.9  UNION ALL
+    SELECT 'technology_hiring',                   'use_case_portfolio',               0.1,             FALSE,              0.9  UNION ALL
+    -- innovation_activity (reliability=0.85)
+    SELECT 'innovation_activity',                 'technology_stack',                0.8,             TRUE,               0.85 UNION ALL
+    SELECT 'innovation_activity',                 'use_case_portfolio',               0.1,             FALSE,              0.85 UNION ALL
+    SELECT 'innovation_activity',                 'culture_change',                  0.1,             FALSE,              0.85 UNION ALL
+    -- digital_presence (reliability=0.75)
+    SELECT 'digital_presence',                    'technology_stack',                0.6,             TRUE,               0.75 UNION ALL
+    SELECT 'digital_presence',                    'data_infrastructure',             0.4,             FALSE,              0.75 UNION ALL
+    -- leadership_signals (reliability=0.95)
+    SELECT 'leadership_signals',                  'leadership_vision',               0.7,             TRUE,               0.95 UNION ALL
+    SELECT 'leadership_signals',                  'culture_change',                  0.1,             FALSE,              0.95 UNION ALL
+    SELECT 'leadership_signals',                  'ai_governance',                   0.2,             FALSE,              0.95 UNION ALL
+    -- sec_item_1 (reliability=0.95)
+    SELECT 'sec_item_1',                          'use_case_portfolio',               0.5,             TRUE,               0.95 UNION ALL
+    SELECT 'sec_item_1',                          'technology_stack',                0.2,             FALSE,              0.95 UNION ALL
+    SELECT 'sec_item_1',                          'leadership_vision',               0.3,             FALSE,              0.95 UNION ALL
+    -- sec_item_1a (reliability=0.9)
+    SELECT 'sec_item_1a',                         'ai_governance',                   0.6,             TRUE,               0.9  UNION ALL
+    SELECT 'sec_item_1a',                         'data_infrastructure',             0.4,             FALSE,              0.9  UNION ALL
+    -- sec_item_7 (reliability=0.9)
+    SELECT 'sec_item_7',                          'leadership_vision',               0.6,             TRUE,               0.9  UNION ALL
+    SELECT 'sec_item_7',                          'use_case_portfolio',               0.2,             FALSE,              0.9  UNION ALL
+    SELECT 'sec_item_7',                          'data_infrastructure',             0.2,             FALSE,              0.9  UNION ALL
+    -- glassdoor_reviews (reliability=0.6)
+    SELECT 'glassdoor_reviews',                   'culture_change',                  0.8,             TRUE,               0.6  UNION ALL
+    SELECT 'glassdoor_reviews',                   'talent_skills',                   0.1,             FALSE,              0.6  UNION ALL
+    SELECT 'glassdoor_reviews',                   'leadership_vision',               0.1,             FALSE,              0.6  UNION ALL
+    -- board_composition (reliability=0.85)
+    SELECT 'board_composition',                   'ai_governance',                   0.7,             TRUE,               0.85 UNION ALL
+    SELECT 'board_composition',                   'leadership_vision',               0.3,             FALSE,              0.85
+) AS source
+ON target.signal_source = source.signal_source AND target.dimension = source.dimension
+WHEN NOT MATCHED THEN
+    INSERT (signal_source, dimension, weight, is_primary, reliability)
+    VALUES (source.signal_source, source.dimension, source.weight, source.is_primary, source.reliability)
+WHEN MATCHED THEN
+    UPDATE SET
+        weight     = source.weight,
+        is_primary = source.is_primary,
+        reliability = source.reliability,
+        updated_at  = CURRENT_TIMESTAMP(),
+        updated_by  = 'seed';

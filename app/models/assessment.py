@@ -33,7 +33,8 @@ class AssessmentUpdate(BaseModel):
     v_r_score: Optional[float] = Field(None, ge=0, le=100)
     confidence_lower: Optional[float] = Field(None, ge=0, le=100)
     confidence_upper: Optional[float] = Field(None, ge=0, le=100)
-    
+    evidence_count: Optional[int] = Field(None, ge=0)
+
     @model_validator(mode="after")
     def validate_confidence_interval(self) -> "AssessmentUpdate":
         """Ensure confidence_upper >= confidence_lower."""
@@ -62,8 +63,9 @@ class AssessmentResponse(AssessmentBase):
     v_r_score: Optional[float] = Field(None, ge=0, le=100)
     confidence_lower: Optional[float] = Field(None, ge=0, le=100)
     confidence_upper: Optional[float] = Field(None, ge=0, le=100)
+    evidence_count: Optional[int] = Field(None, ge=0)
     created_at: datetime
-    
+
     @model_validator(mode="after")
     def validate_confidence_interval(self) -> "AssessmentResponse":
         """Ensure confidence_upper >= confidence_lower."""

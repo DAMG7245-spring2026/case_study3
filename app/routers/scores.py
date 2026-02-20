@@ -387,6 +387,7 @@ async def compute_org_air(company_id: UUID):
         confidence_upper=scores.confidence_upper,
         position_factor=scores.position_factor,
         talent_concentration=scores.talent_concentration,
+        evidence_count=scores.evidence_count,
     )
 
     # Invalidate caches
@@ -451,6 +452,7 @@ async def compute_all(company_id: UUID):
         confidence_upper=scores.confidence_upper,
         position_factor=scores.position_factor,
         talent_concentration=scores.talent_concentration,
+        evidence_count=scores.evidence_count,
     )
 
     # Invalidate cache

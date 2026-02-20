@@ -16,7 +16,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('companies', sa.Column('glassdoor_company_id', sa.String(20), nullable=True))
+    # Use raw SQL with IF NOT EXISTS so this is safe to re-run on Snowflake
+    # instances where the column was already applied outside of Alembic.
+    op.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS glassdoor_company_id VARCHAR(20)")
 
 
 def downgrade() -> None:
