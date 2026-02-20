@@ -102,6 +102,16 @@ for r in portfolio_results:
     })
 st.dataframe(table_data, use_container_width=True, hide_index=True)
 
+# Download portfolio JSON (up to 5 companies)
+portfolio_json = json.dumps(portfolio_results, indent=2, default=str)
+st.download_button(
+    "Download portfolio JSON",
+    data=portfolio_json,
+    file_name="portfolio.json",
+    mime="application/json",
+    key="portfolio_download_json",
+)
+
 # Charts (Plotly): comparison, sector, heatmaps
 valid = [r for r in portfolio_results if r.get("org_air_score") is not None]
 if valid:
